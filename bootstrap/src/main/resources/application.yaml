@@ -1,0 +1,126 @@
+server:
+  port: 18080
+
+spring:
+  application:
+    name: my-agent
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 100MB
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://127.0.0.1:5432/myagent?client_encoding=UTF8
+    username: postgres
+    password: postgres
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      pool-name: MyAgentHikariPool
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      password: 123456
+
+rocketmq:
+  name-server: 127.0.0.1:9876
+  producer:
+    group: myagent-producer
+    send-message-timeout: 3000
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+sa-token:
+  token-name: Authorization
+  timeout: 2592000
+  is-concurrent: true
+  is-share: false
+  token-style: simple-uuid
+  is-log: false
+  is-print: false
+
+ai:
+  providers:
+    siliconflow:
+      url: https://api.siliconflow.cn
+      api-key: ${SILICONFLOW_API_KEY:}
+      endpoints:
+        chat: /v1/chat/completions
+        embedding: /v1/embeddings
+    bailian:
+      url: https://dashscope.aliyuncs.com
+      api-key: ${BAILIAN_API_KEY:}
+      endpoints:
+        chat: /compatible-mode/v1/chat/completions
+        embedding: /compatible-mode/v1/embeddings
+  chat:
+    provider: siliconflow
+    model: deepseek-ai/DeepSeek-V3
+    temperature: 0.3
+    max-tokens: 1024
+  embedding:
+    provider: siliconflow
+    model: BAAI/bge-m3
+    default-model: bge-m3
+    dimension: ${rag.default.dimension}
+    candidates:
+      - id: bge-m3
+        provider: siliconflow
+        model: BAAI/bge-m3
+        dimension: ${rag.default.dimension}
+        priority: 1
+        enabled: true
+      - id: text-embedding-v4
+        provider: bailian
+        model: text-embedding-v4
+        dimension: ${rag.default.dimension}
+        priority: 2
+        enabled: true
+
+# 对象存储 / 向量 / 上传限流（对齐本机 rustfs + RocketMQ）
+rag:
+  storage:
+    type: s3
+    kb-bucket: myagent-sources
+    asset-bucket: myagent-assets
+    s3:
+      # 本机 docker 容器名 rustfs，账号与 ragent 一致
+      endpoint: http://127.0.0.1:9000
+      access-key: rustfsadmin
+      secret-key: rustfsadmin
+      region: us-east-1
+      path-style: true
+  vector:
+    type: pg
+  default:
+    collection-name: myagent_default_store
+    dimension: 1024
+    metric-type: COSINE
+  semaphore:
+    document-upload:
+      name: myagent:document:upload
+      max-concurrent: 10
+      max-wait-seconds: 30
+      lease-seconds: 30
+
+logging:
+  level:
+    root: INFO
+    com.myagent: DEBUG
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
