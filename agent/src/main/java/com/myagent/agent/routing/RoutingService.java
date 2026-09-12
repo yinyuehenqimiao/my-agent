@@ -8,6 +8,7 @@ import com.myagent.system.auth.service.PolicyDecisionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -121,8 +122,8 @@ public class RoutingService {
             return jdbc.queryForMap(
                     "SELECT workflow_def_key, react_config FROM wf_route WHERE intent_code=? AND tenant_id='default' LIMIT 1",
                     intentCode);
-        } catch (Exception e) {
-            // 表不存在或无匹配时返回 null（fail-open 路由后续按意图类型决策）
+        } catch (EmptyResultDataAccessException e) {
+            // 没有配置绑定时才按意图类型继续决策；数据库异常必须向上抛出，禁止故障时误入 ReAct。
             return null;
         }
     }

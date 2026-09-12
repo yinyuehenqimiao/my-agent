@@ -1,5 +1,7 @@
 package com.myagent.framework.tool;
 
+import java.util.List;
+
 /**
  * Tool Gateway：ReAct、Flowable、MCP 与后台测试调用的统一安全工具入口。
  * <p>
@@ -22,4 +24,10 @@ public interface ToolGateway {
 
     /** 工具是否已注册且启用 */
     boolean isAvailable(String toolName);
+
+    /**
+     * 返回按名称排序的工具定义只读快照，供授权后的管理后台展示。
+     * 该方法不暴露处理器，也不提供绕过 invoke 安全管道的执行入口。
+     */
+    List<ToolDefinition> listDefinitions();
 }

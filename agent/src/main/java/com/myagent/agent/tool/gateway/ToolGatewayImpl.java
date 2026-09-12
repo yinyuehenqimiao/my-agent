@@ -62,6 +62,14 @@ public class ToolGatewayImpl implements ToolGateway {
     }
 
     @Override
+    public List<ToolDefinition> listDefinitions() {
+        return registry.values().stream()
+                .map(ToolEntry::definition)
+                .sorted(java.util.Comparator.comparing(ToolDefinition::getName))
+                .toList();
+    }
+
+    @Override
     public ToolResult invoke(ToolInvocation invocation) {
         String traceId = ensureTrace(invocation);
         // 1. 执行身份获取（fail-closed）

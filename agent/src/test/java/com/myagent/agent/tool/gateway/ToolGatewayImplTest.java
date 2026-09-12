@@ -166,4 +166,15 @@ class ToolGatewayImplTest {
         def.setEnabled(false);
         assertFalse(gateway.isAvailable("ro"));
     }
+
+    @Test
+    void catalogSnapshotIsStableAndSortedForAdministration() {
+        gateway.register(readOnlyDef("z_tool", null), inv -> ToolResult.success("z", inv.getTraceId()));
+        gateway.register(readOnlyDef("a_tool", null), inv -> ToolResult.success("a", inv.getTraceId()));
+
+        List<ToolDefinition> definitions = gateway.listDefinitions();
+
+        assertEquals(List.of("a_tool", "z_tool"), definitions.stream().map(ToolDefinition::getName).toList());
+        assertThrows(UnsupportedOperationException.class, () -> definitions.add(readOnlyDef("bad", null)));
+    }
 }

@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -135,5 +136,13 @@ class RoutingServiceTest {
         when(policy.hasPermission(any(), eq("workflow:submit"))).thenReturn(false);
         var r = routing.route("leave-approval-fake", IntentKind.MCP, 0.99, false, identity("attacker"));
         assertEquals(RouteDecision.DENY, r.getDecision());
+    }
+
+    @Test
+    void routeStorageFailureMustNotFailOpenIntoReact() {
+        jdbc.execute("DROP TABLE wf_route");
+
+        assertThrows(DataAccessException.class,
+                () -> routing.route("open-analysis", IntentKind.MCP, 0.99, false, identity("e")));
     }
 }
