@@ -4,8 +4,12 @@
   <parent><groupId>com.myagent</groupId><artifactId>my-agent</artifactId><version>0.0.1-SNAPSHOT</version></parent>
   <artifactId>enterprise</artifactId>
   <dependencies>
-    <dependency><groupId>com.myagent</groupId><artifactId>system</artifactId></dependency>
-    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-jdbc</artifactId></dependency>
+        <dependency><groupId>com.myagent</groupId><artifactId>system</artifactId></dependency>
+        <dependency>
+            <groupId>com.myagent</groupId>
+            <artifactId>workflow</artifactId>
+        </dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-jdbc</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webmvc</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>
     <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>test</scope></dependency>

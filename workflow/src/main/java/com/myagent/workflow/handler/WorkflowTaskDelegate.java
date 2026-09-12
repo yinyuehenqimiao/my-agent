@@ -1,0 +1,37 @@
+package com.myagent.workflow.handler;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.JavaDelegate;
+import org.springframework.stereotype.Component;
+
+/**
+ * 白名单中央委托：BPMN serviceTask 通过 flowable:class 指向本类，
+ * 本类按当前节点 id 分发到 {@link WorkflowTaskHandlerRegistry} 中注册的处理器。
+ * <p>
+ * 这是 BPMN 中唯一允许的 Java 类（见 BpmnValidator 白名单），禁止任意其他 Java 类。
+ */
+@Slf4j
+@Component("workflowTaskDelegate")
+@RequiredArgsConstructor
+public class WorkflowTaskDelegate implements JavaDelegate {
+
+    private final WorkflowTaskHandlerRegistry registry;
+
+    @Override
+    public void execute(DelegateExecution execution) {
+        String activityId = execution.getCurrentActivityId();
+        WorkflowTaskHandler handler = registry.get(activityId);
+        if (handler == null) {
+            throw new IllegalStateException("未注册的工作流任务处理器: " + activityId);
+        }
+        try {
+            handler.handle(execution);
+        } catch (Exception e) {
+            log.error("workflow task handler failed activity={} traceId={}", activityId, execution.getProcessInstanceBusinessKey(), e);
+            if (e instanceof RuntimeException re) throw re;
+            throw new RuntimeException(e);
+        }
+    }
+}
