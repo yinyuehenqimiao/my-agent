@@ -5,17 +5,19 @@ import com.myagent.enterprise.dto.EnterpriseTypes.*;
 import com.myagent.framework.context.LoginUser;
 import com.myagent.framework.context.UserContext;
 import com.myagent.framework.exception.ClientException;
+import com.myagent.system.auth.service.PolicyDecisionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
-/** Deny by default. No grant means an existing KB is visible only to administrators. */
+/** Deny by default. No grant means an existing KB is visible only to users with knowledge:authorize. */
 @Service
 @RequiredArgsConstructor
 public class KnowledgeAccessService {
     private final EnterpriseMapper db;
+    private final PolicyDecisionService policy;
     @Value("${myagent.enterprise.enabled:false}") private boolean enabled;
     public boolean enabled() { return enabled; }
     public LoginUser identity(String userId) {
@@ -23,14 +25,19 @@ public class KnowledgeAccessService {
         if (user == null) throw new ClientException("登录身份已失效");
         return user;
     }
+    /** 知识授权需要 knowledge:authorize 权限码（替代旧 admin 字符串判断） */
     public void requireAdmin() {
-        if (!"admin".equals(UserContext.requireUser().getRole())) throw new ClientException("需要系统管理员权限");
+        policy.requirePermission(UserContext.requireIdentity(), "knowledge:authorize");
     }
     public List<String> allowedCollections() {
         if (!enabled) return null;
         LoginUser user = UserContext.requireUser();
         record Collection(String collectionName) { }
-        if ("admin".equals(user.getRole())) return db.list(Collection.class, "SELECT collection_name FROM t_knowledge_base WHERE deleted=0").stream().map(Collection::collectionName).toList();
+        // 拥有 knowledge:authorize 权限可读全部知识库（替代旧 admin 旁路）
+        if (policy.hasPermission(user, "knowledge:authorize")) {
+            return db.list(Collection.class, "SELECT collection_name FROM t_knowledge_base WHERE deleted=0")
+                    .stream().map(Collection::collectionName).toList();
+        }
         Employee e = db.employee(user.getUserId(), false);
         if (e == null || !e.active()) return List.of();
         return db.list(Collection.class, "SELECT DISTINCT k.collection_name FROM t_knowledge_base k JOIN ent_kb_grant g ON g.kb_id=k.id WHERE k.deleted=0 AND (g.audience='ALL' OR (g.audience='DEPARTMENT' AND g.subject=?) OR (g.audience='ROLE' AND g.subject=?))", e.department(), e.businessRole()).stream().map(Collection::collectionName).toList();
@@ -47,7 +54,10 @@ public class KnowledgeAccessService {
         Doc doc = db.one(Doc.class, "SELECT kb_id,enabled FROM t_knowledge_document WHERE id=? AND deleted=0", docId);
         if (doc == null) throw new ClientException("文档不存在或无权访问");
         requireKb(doc.kbId());
-        if (doc.enabled() != 1 && !"admin".equals(UserContext.requireUser().getRole())) throw new ClientException("文档已停用");
+        // 仅 knowledge:authorize 可读停用文档（替代旧 admin 判断）
+        if (doc.enabled() != 1 && !policy.hasPermission(UserContext.requireIdentity(), "knowledge:authorize")) {
+            throw new ClientException("文档已停用");
+        }
     }
     public Policy policy(String docId) { return db.one(Policy.class, "SELECT version,effective_date FROM ent_document_policy WHERE doc_id=?", docId); }
     @Transactional public void grants(String kbId, List<Grant> grants) {

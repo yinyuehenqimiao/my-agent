@@ -31,6 +31,11 @@ public final class UserContext {
         return user;
     }
 
+    /** 返回统一执行身份（fail-closed：缺失即抛异常） */
+    public static ExecutionIdentity requireIdentity() {
+        return requireUser();
+    }
+
     public static String getUserId() {
         LoginUser user = CONTEXT.get();
         return user == null ? null : user.getUserId();
