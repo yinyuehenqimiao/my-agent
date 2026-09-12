@@ -110,23 +110,31 @@ public class BpmnValidator {
     }
 
     private ValidationResult checkNoJavaOrScript(Element el) {
-        String[] forbiddenAttrs = {
-                "flowable:class", "flowable:expression", "flowable:delegateExpression",
-                "flowable:script", "scriptFormat", "flowable:type"};
-        // flowable:type 仅允许工具/校验/检索/模板等安全类型，由运行时解释
+        // 白名单中央委托：平台唯一的 WorkflowTaskDelegate（class 或 delegateExpression 指向该 bean），按节点分发到 SPI；禁止任意其他
+        java.util.Set<String> WHITELISTED_CLASSES = java.util.Set.of(
+                "com.myagent.workflow.handler.WorkflowTaskDelegate");
+        java.util.Set<String> WHITELISTED_DELEGATE_EXPR = java.util.Set.of(
+                "${workflowTaskDelegate}", "workflowTaskDelegate");
+        String[] forbiddenAttrs = {"flowable:expression", "flowable:script", "scriptFormat"};
         for (String attr : forbiddenAttrs) {
-            if (el.hasAttribute(attr)) {
-                String v = el.getAttribute(attr);
-                if (attr.equals("flowable:type")) {
-                    // 允许的 type 值（由 WorkflowTaskHandler SPI 解释，非 Java）
-                    if (!isAllowedSafeType(v))
-                        return ValidationResult.fail("不支持的 flowable:type：" + v);
-                    continue;
-                }
+            if (el.hasAttribute(attr))
                 return ValidationResult.fail("禁止 Java/脚本/表达式委托属性 " + attr + " 在节点 " + el.getAttribute("id"));
-            }
         }
-        // 子元素 script
+        if (el.hasAttribute("flowable:class")) {
+            String v = el.getAttribute("flowable:class");
+            if (!WHITELISTED_CLASSES.contains(v))
+                return ValidationResult.fail("禁止非白名单 flowable:class " + v + " 在节点 " + el.getAttribute("id"));
+        }
+        if (el.hasAttribute("flowable:delegateExpression")) {
+            String v = el.getAttribute("flowable:delegateExpression");
+            if (!WHITELISTED_DELEGATE_EXPR.contains(v))
+                return ValidationResult.fail("禁止非白名单 delegateExpression " + v + " 在节点 " + el.getAttribute("id"));
+        }
+        if (el.hasAttribute("flowable:type")) {
+            String v = el.getAttribute("flowable:type");
+            if (!isAllowedSafeType(v))
+                return ValidationResult.fail("不支持的 flowable:type：" + v);
+        }
         if (el.getElementsByTagName("script").getLength() > 0)
             return ValidationResult.fail("禁止 script 子元素在节点 " + el.getAttribute("id"));
         return ValidationResult.ok();
