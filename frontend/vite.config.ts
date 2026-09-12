@@ -34,6 +34,21 @@ export default defineConfig({
         target: "http://localhost:18080",
         changeOrigin: true,
         secure: false
+      },
+      "/agent": {
+        target: "http://localhost:18080",
+        changeOrigin: true,
+        secure: false
+      },
+      "/agents": {
+        target: "http://localhost:18080",
+        changeOrigin: true,
+        secure: false
+      },
+      "/intent-tree": {
+        target: "http://localhost:18080",
+        changeOrigin: true,
+        secure: false
       }
     }
   }

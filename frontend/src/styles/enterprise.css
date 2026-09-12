@@ -1,0 +1,9 @@
+.enterprise-page { min-height: 100vh; padding: 40px max(24px, calc((100vw - 1200px)/2)); background: #f7f9fc; color: #17233a; }
+.enterprise-card { border: 1px solid #dce3ee; background: #fff; color: #17233a; border-radius: 14px; padding: 20px; box-shadow: 0 4px 16px #17233a04; overflow-wrap: anywhere; }
+.enterprise-input { display: block; width: 100%; margin-top: 6px; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #17233a; }
+.enterprise-primary, .enterprise-secondary { display: inline-block; padding: 9px 15px; border-radius: 8px; font-size: 14px; cursor: pointer; }
+.enterprise-primary { background: #245bca; color: white; border: 1px solid #245bca; }
+.enterprise-secondary { background: white; color: #245bca; border: 1px solid #cad7f1; }
+.enterprise-primary:disabled, .enterprise-secondary:disabled { opacity: .5; cursor: not-allowed; }
+.enterprise-input:focus, .enterprise-primary:focus-visible, .enterprise-secondary:focus-visible { outline: 2px solid #6b9eef; outline-offset: 2px; }
+@media(max-width:640px) { .enterprise-page { padding: 24px 16px; } .enterprise-card { padding: 14px; } }

@@ -25,7 +25,7 @@ export function LoginPage() {
     try {
       await login(form.username.trim(), form.password.trim());
       void remember;
-      navigate("/admin/knowledge");
+      navigate("/chat");
     } catch (err) {
       setError((err as Error).message || "登录失败，请稍后重试。");
     }
@@ -37,7 +37,7 @@ export function LoginPage() {
       <div className="relative z-10 w-full max-w-md rounded-3xl border border-border/70 bg-background/80 p-8 shadow-soft backdrop-blur">
         <div className="mb-6">
           <p className="font-display text-2xl font-semibold">my-agent 管理后台</p>
-          <p className="mt-1 text-sm text-muted-foreground">登录后管理知识库与文档上传。</p>
+          <p className="mt-1 text-sm text-muted-foreground">登录后进入智能体对话或管理知识库。</p>
         </div>
         <form className="space-y-4" onSubmit={handleSubmit}>
           <div className="space-y-2">

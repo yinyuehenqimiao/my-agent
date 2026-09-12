@@ -4,6 +4,7 @@ export interface User {
   role: string;
   token: string;
   nickname?: string;
+  avatar?: string;
 }
 
 export type CurrentUser = Omit<User, "token">;

@@ -12,8 +12,7 @@ export const api = axios.create({
 
 export function setAuthToken(token: string | null) {
   if (token) {
-    // Sa-Token: raw token in Authorization header (no Bearer prefix)
-    api.defaults.headers.common.Authorization = token;
+    api.defaults.headers.common.Authorization = `Bearer ${token}`;
   } else {
     delete api.defaults.headers.common.Authorization;
   }
@@ -22,7 +21,7 @@ export function setAuthToken(token: string | null) {
 api.interceptors.request.use((config) => {
   const token = storage.getToken();
   if (token) {
-    config.headers.Authorization = token;
+    config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });

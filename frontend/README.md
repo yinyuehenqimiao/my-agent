@@ -43,7 +43,7 @@ VITE_API_BASE_URL=http://localhost:18080
 | 知识库 CRUD | `/knowledge-base` | KnowledgeBaseController（**无** `/api` 前缀） |
 | 文档上传/列表/分块 | `/knowledge-base/.../docs...` | KnowledgeDocumentController |
 
-鉴权头：`Authorization: <raw Sa-Token>`（不加 `Bearer`）。
+鉴权头：`Authorization: Bearer <JWT>`。
 
 ## 功能范围
 
