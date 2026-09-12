@@ -41,7 +41,12 @@ public enum IntentKind {
     /**
      * MCP，实时数据交互
      */
-    MCP(2);
+    MCP(2),
+
+    /**
+     * 工作流，固定业务流程走 Flowable
+     */
+    WORKFLOW(3);
 
     /**
      * 意图类型编码
