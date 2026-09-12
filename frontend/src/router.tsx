@@ -12,6 +12,9 @@ import { KnowledgeChunksPage } from "@/pages/admin/knowledge/KnowledgeChunksPage
 import { IntentTreePage } from "@/pages/admin/intent-tree/IntentTreePage";
 import { IntentListPage } from "@/pages/admin/intent-tree/IntentListPage";
 import { IntentEditPage } from "@/pages/admin/intent-tree/IntentEditPage";
+import { WorkflowListPage } from "@/pages/admin/workflow/WorkflowListPage";
+import { WorkflowDesignerPage } from "@/pages/admin/workflow/WorkflowDesignerPage";
+import { ToolCenterPage, AuditPage, RouteSimulationPage } from "@/pages/admin/workflow/WorkflowAdminPages";
 import { AgentProfilePage } from "@/pages/admin/agents/AgentProfilePage";
 import { AgentPromptPage } from "@/pages/admin/agents/AgentPromptPage";
 import { useAuthStore } from "@/stores/authStore";
@@ -130,6 +133,30 @@ export const router = createBrowserRouter([
       {
         path: "intent-list/:id/edit",
         element: <IntentEditPage />
+      },
+      {
+        path: "workflow",
+        element: <WorkflowListPage />
+      },
+      {
+        path: "workflow/new",
+        element: <WorkflowDesignerPage />
+      },
+      {
+        path: "workflow/:defKey",
+        element: <WorkflowDesignerPage />
+      },
+      {
+        path: "workflow/tools",
+        element: <ToolCenterPage />
+      },
+      {
+        path: "workflow/simulate",
+        element: <RouteSimulationPage />
+      },
+      {
+        path: "workflow/audit",
+        element: <AuditPage />
       }
     ]
   },

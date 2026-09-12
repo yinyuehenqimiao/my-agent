@@ -13,6 +13,9 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  Shield,
+  Wrench,
+  Workflow,
   type LucideIcon
 } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
@@ -67,6 +70,18 @@ const menuItems: MenuItem[] = [
       { path: "/admin/intent-tree", label: "意图树配置", icon: GitBranch },
       { path: "/admin/intent-list", label: "意图列表", icon: ClipboardList }
     ]
+  },
+  {
+    id: "workflow",
+    path: "/admin/workflow",
+    label: "工作流中心",
+    icon: Workflow,
+    children: [
+      { path: "/admin/workflow", label: "工作流列表", icon: GitBranch },
+      { path: "/admin/workflow/tools", label: "工具与连接器", icon: Wrench },
+      { path: "/admin/workflow/simulate", label: "路由模拟", icon: ClipboardList },
+      { path: "/admin/workflow/audit", label: "审计查询", icon: Shield }
+    ]
   }
 ];
 
@@ -75,7 +90,11 @@ const breadcrumbMap: Record<string, string> = {
   knowledge: "知识库",
   agents: "智能体管理",
   "intent-tree": "意图树配置",
-  "intent-list": "意图列表"
+  "intent-list": "意图列表",
+  workflow: "工作流中心",
+  "workflow/tools": "工具与连接器",
+  "workflow/simulate": "路由模拟",
+  "workflow/audit": "审计查询"
 };
 
 export function AdminLayout() {
@@ -89,12 +108,15 @@ export function AdminLayout() {
     location.pathname.startsWith("/admin/intent-tree") ||
     location.pathname.startsWith("/admin/intent-list");
 
+  const isWorkflowActive = location.pathname.startsWith("/admin/workflow");
+
   useEffect(() => {
     setOpenGroups((prev) => ({
       ...prev,
-      intent: prev.intent || isIntentActive
+      intent: prev.intent || isIntentActive,
+      workflow: prev.workflow || isWorkflowActive
     }));
-  }, [isIntentActive]);
+  }, [isIntentActive, isWorkflowActive]);
 
   const handleLogout = async () => {
     await logout();
@@ -115,6 +137,19 @@ export function AdminLayout() {
         items.push({ label: "编辑节点" });
       } else {
         items.push({ label: breadcrumbMap[section] || section });
+      }
+      return items;
+    }
+
+    if (section === "workflow") {
+      items.push({ label: "工作流中心", to: "/admin/workflow" });
+      const sub = segments[2];
+      if (sub === "new") {
+        items.push({ label: "新建工作流" });
+      } else if (sub && breadcrumbMap[`${section}/${sub}`]) {
+        items.push({ label: breadcrumbMap[`${section}/${sub}`] });
+      } else if (sub) {
+        items.push({ label: `编辑 ${sub}` });
       }
       return items;
     }
