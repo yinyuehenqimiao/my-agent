@@ -31,8 +31,10 @@ import static com.myagent.rag.enums.IntentLevel.TOPIC;
  */
 public class IntentTreeFactory {
 
-    private static final String KB_ID_GROUP = "1997855927072321537";
-    private static final String KB_ID_BIZ = "1997857139737882625";
+    /** 默认绑定本地「人事系统知识库」，initFromFactory 时会解析 collection */
+    private static final String KB_ID_DEFAULT = "2092208981865934848";
+    private static final String KB_ID_GROUP = KB_ID_DEFAULT;
+    private static final String KB_ID_BIZ = KB_ID_DEFAULT;
 
     public static List<IntentNode> buildIntentTree() {
         List<IntentNode> roots = new ArrayList<>();

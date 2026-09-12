@@ -19,9 +19,21 @@ package com.myagent.rag.controller;
 
 import com.myagent.framework.convention.Result;
 import com.myagent.framework.web.Results;
-import com.myagent.infra.config.AiProperties;
+import com.myagent.infra.config.AIModelProperties;
+import com.myagent.rag.config.GraphProperties;
+import com.myagent.rag.config.KeywordProperties;
+import com.myagent.rag.config.MemoryProperties;
+import com.myagent.rag.config.OrchestrationProperties;
+import com.myagent.rag.config.RAGConfigProperties;
+import com.myagent.rag.config.RAGDefaultProperties;
+import com.myagent.rag.config.RAGRateLimitProperties;
+import com.myagent.rag.config.RagStorageProperties;
+import com.myagent.rag.config.RagTraceProperties;
+import com.myagent.rag.config.SearchChannelProperties;
 import com.myagent.rag.controller.vo.SystemSettingsVO;
 import com.myagent.rag.controller.vo.SystemSettingsVO.AISettings;
+import com.myagent.rag.controller.vo.SystemSettingsVO.BackendSettings;
+import com.myagent.rag.controller.vo.SystemSettingsVO.SearchSettings;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.util.StringUtils;
@@ -29,19 +41,32 @@ import org.springframework.util.unit.DataSize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
- * RAG 设置只读接口：供前端选择 Embedding 模型、读取上传上限
+ * RAG 设置控制器，负责系统引擎、后端选型、检索管线与 AI 模型配置的只读查询
  */
 @RestController
 @RequiredArgsConstructor
 public class RAGSettingsController {
 
-    private final AiProperties aiProperties;
+    private final OrchestrationProperties orchestrationProperties;
+    private final RagStorageProperties ragStorageProperties;
+    private final KeywordProperties keywordProperties;
+    private final GraphProperties graphProperties;
+    private final RAGDefaultProperties ragDefaultProperties;
+    private final RAGConfigProperties ragConfigProperties;
+    private final RagTraceProperties ragTraceProperties;
+    private final SearchChannelProperties searchChannelProperties;
+    private final RAGRateLimitProperties ragRateLimitProperties;
+    private final MemoryProperties memoryProperties;
+    private final AIModelProperties aiModelProperties;
+
+    @Value("${rag.vector.type:milvus}")
+    private String vectorType;
 
     @Value("${spring.servlet.multipart.max-file-size:50MB}")
     private DataSize maxFileSize;
@@ -49,84 +74,213 @@ public class RAGSettingsController {
     @Value("${spring.servlet.multipart.max-request-size:100MB}")
     private DataSize maxRequestSize;
 
+    /**
+     * 获取系统引擎、后端选型、检索管线与 AI 模型等配置信息
+     */
     @GetMapping("/rag/settings")
     public Result<SystemSettingsVO> settings() {
-        return Results.success(SystemSettingsVO.builder()
-                .ai(toAISettings())
+        SystemSettingsVO response = SystemSettingsVO.builder()
+                .engine(SystemSettingsVO.EngineSettings.builder()
+                        .type(orchestrationProperties.getMode().name().toLowerCase(Locale.ROOT))
+                        .build())
+                .backends(toBackendSettings())
+                .rag(toRagSettings())
+                .ai(toAISettings(aiModelProperties))
                 .upload(SystemSettingsVO.UploadSettings.builder()
                         .maxFileSize(maxFileSize.toBytes())
                         .maxRequestSize(maxRequestSize.toBytes())
                         .build())
-                .build());
+                .build();
+        return Results.success(response);
     }
 
-    private AISettings toAISettings() {
+    private BackendSettings toBackendSettings() {
+        return BackendSettings.builder()
+                .storage(toStorageBackend(ragStorageProperties))
+                .vector(BackendSettings.VectorBackend.builder()
+                        .type(vectorType)
+                        .build())
+                .keyword(BackendSettings.KeywordBackend.builder()
+                        .type(keywordProperties.getType())
+                        .uris(keywordProperties.getEs().getUris())
+                        .index(keywordProperties.getEs().getIndex())
+                        .analyzer(keywordProperties.getEs().getAnalyzer())
+                        .searchAnalyzer(keywordProperties.getEs().getSearchAnalyzer())
+                        .build())
+                .graph(BackendSettings.GraphBackend.builder()
+                        .type(graphProperties.getType())
+                        .baseUrl(graphProperties.getLightrag().getBaseUrl())
+                        .queryMode(graphProperties.getLightrag().getQueryMode())
+                        .embeddingModel(graphProperties.getEmbeddingModel())
+                        .build())
+                .build();
+    }
+
+    private BackendSettings.StorageBackend toStorageBackend(RagStorageProperties props) {
+        boolean oss = "oss".equalsIgnoreCase(props.getType());
+        return BackendSettings.StorageBackend.builder()
+                .type(props.getType())
+                .kbBucket(props.getKbBucket())
+                .assetBucket(props.getAssetBucket())
+                .endpoint(oss ? props.getOss().getEndpoint() : props.getS3().getEndpoint())
+                .publicUrl(oss ? props.getOss().getPublicUrl() : props.getS3().resolvePublicUrl())
+                .region(oss ? props.getOss().getRegion() : props.getS3().getRegion())
+                .build();
+    }
+
+    private SystemSettingsVO.RagSettings toRagSettings() {
+        return SystemSettingsVO.RagSettings.builder()
+                .defaultConfig(SystemSettingsVO.DefaultSettings.builder()
+                        .collectionName(ragDefaultProperties.getCollectionName())
+                        .dimension(ragDefaultProperties.getDimension())
+                        .metricType(ragDefaultProperties.getMetricType())
+                        .sseTimeoutMs(ragDefaultProperties.getSseTimeoutMs())
+                        .build())
+                .features(SystemSettingsVO.FeatureSettings.builder()
+                        .queryRewrite(ragConfigProperties.getQueryRewriteEnabled())
+                        .rerank(ragConfigProperties.getRerankEnabled())
+                        .citation(ragConfigProperties.getCitationEnabled())
+                        .contextEnrich(ragConfigProperties.getContextEnrichEnabled())
+                        .trace(ragTraceProperties.isEnabled())
+                        .build())
+                .search(toSearchSettings(searchChannelProperties))
+                .rateLimit(SystemSettingsVO.RateLimitSettings.builder()
+                        .global(SystemSettingsVO.GlobalRateLimit.builder()
+                                .enabled(ragRateLimitProperties.getGlobalEnabled())
+                                .maxConcurrent(ragRateLimitProperties.getGlobalMaxConcurrent())
+                                .maxWaitSeconds(ragRateLimitProperties.getGlobalMaxWaitSeconds())
+                                .leaseSeconds(ragRateLimitProperties.getGlobalLeaseSeconds())
+                                .pollIntervalMs(ragRateLimitProperties.getGlobalPollIntervalMs())
+                                .build())
+                        .build())
+                .memory(SystemSettingsVO.MemorySettings.builder()
+                        .historyKeepTurns(memoryProperties.getHistoryKeepTurns())
+                        .summaryEnabled(memoryProperties.getSummaryEnabled())
+                        .summaryStartTurns(memoryProperties.getSummaryStartTurns())
+                        .summaryMaxChars(memoryProperties.getSummaryMaxChars())
+                        .titleMaxLength(memoryProperties.getTitleMaxLength())
+                        .build())
+                .build();
+    }
+
+    private SearchSettings toSearchSettings(SearchChannelProperties props) {
+        SearchChannelProperties.Channels channels = props.getChannels();
+        SearchChannelProperties.ChannelWeights weights = props.getFusion().getChannelWeights();
+        return SearchSettings.builder()
+                .defaultTopK(props.getDefaultTopK())
+                .recallBudget(props.resolveRecallBudget(props.getDefaultTopK()))
+                .scope(SearchSettings.ScopeSettings.builder()
+                        .minIntentScore(props.getScope().getMinIntentScore())
+                        .confidenceThreshold(props.getScope().getConfidenceThreshold())
+                        .supplementRatio(props.getScope().getSupplementRatio())
+                        .build())
+                .channels(SearchSettings.ChannelSettings.builder()
+                        .timeoutMs(channels.getTimeoutMs())
+                        .vector(SearchSettings.Channel.builder()
+                                .enabled(channels.getVector().isEnabled())
+                                .weight(weights.getVector())
+                                .build())
+                        .keyword(SearchSettings.Channel.builder()
+                                .enabled(channels.getKeyword().isEnabled())
+                                .weight(weights.getKeyword())
+                                .build())
+                        .graph(SearchSettings.Channel.builder()
+                                .enabled(channels.getGraph().isEnabled())
+                                .weight(weights.getGraph())
+                                .build())
+                        .webSearch(SearchSettings.WebSearchChannel.builder()
+                                .enabled(channels.getWebSearch().isEnabled())
+                                .weight(weights.getWebSearch())
+                                .count(channels.getWebSearch().getCount())
+                                .timeoutSeconds(channels.getWebSearch().getTimeoutSeconds())
+                                .apiKeyConfigured(StringUtils.hasText(channels.getWebSearch().getApiKey()))
+                                .build())
+                        .build())
+                .fusion(SearchSettings.FusionSettings.builder()
+                        .strategy(props.getFusion().getStrategy())
+                        .rrfK(props.getFusion().getRrfK())
+                        .rerankCandidateLimit(props.getFusion().getRerankCandidateLimit())
+                        .build())
+                .build();
+    }
+
+    private AISettings toAISettings(AIModelProperties props) {
         Map<String, AISettings.ProviderConfig> providers = new HashMap<>();
-        if (aiProperties.getProviders() != null) {
-            aiProperties.getProviders().forEach((key, value) -> {
-                Map<String, String> endpoints = new HashMap<>();
-                if (value.getEndpoints() != null) {
-                    endpoints.put("chat", value.getEndpoints().getChat());
-                    endpoints.put("embedding", value.getEndpoints().getEmbedding());
-                }
-                providers.put(key, AISettings.ProviderConfig.builder()
-                        .url(value.getUrl())
-                        .apiKey(maskApiKey(value.getApiKey()))
-                        .endpoints(endpoints)
-                        .build());
-            });
+        if (props.getProviders() != null) {
+            props.getProviders().forEach((k, v) -> providers.put(k, AISettings.ProviderConfig.builder()
+                    .url(v.getUrl())
+                    .apiKey(maskApiKey(v.getApiKey()))
+                    .endpoints(v.getEndpoints())
+                    .build()));
         }
-
-        AiProperties.EmbeddingConfig embedding = aiProperties.getEmbedding();
-        List<AISettings.ModelCandidate> candidates = new ArrayList<>();
-        if (embedding.getCandidates() != null) {
-            for (AiProperties.ModelCandidate candidate : embedding.getCandidates()) {
-                candidates.add(AISettings.ModelCandidate.builder()
-                        .id(candidate.getId())
-                        .provider(candidate.getProvider())
-                        .model(candidate.getModel())
-                        .url(candidate.getUrl())
-                        .dimension(candidate.getDimension())
-                        .priority(candidate.getPriority())
-                        .enabled(candidate.getEnabled() == null || candidate.getEnabled())
-                        .build());
-            }
-        }
-        // 兼容旧配置：没有 candidates 时，用当前默认 embedding 生成一项
-        if (candidates.isEmpty() && StringUtils.hasText(embedding.getModel())) {
-            String id = StringUtils.hasText(embedding.getDefaultModel())
-                    ? embedding.getDefaultModel()
-                    : embedding.getModel();
-            candidates.add(AISettings.ModelCandidate.builder()
-                    .id(id)
-                    .provider(embedding.getProvider())
-                    .model(embedding.getModel())
-                    .dimension(embedding.getDimension())
-                    .priority(1)
-                    .enabled(true)
-                    .build());
-        }
-
-        String defaultModel = StringUtils.hasText(embedding.getDefaultModel())
-                ? embedding.getDefaultModel()
-                : (candidates.isEmpty() ? embedding.getModel() : candidates.get(0).getId());
 
         return AISettings.builder()
                 .providers(providers)
-                .embedding(AISettings.ModelGroup.builder()
-                        .defaultModel(defaultModel)
-                        .candidates(candidates)
-                        .build())
+                .chat(toModelGroup(props.getChat()))
+                .embedding(toModelGroup(props.getEmbedding()))
+                .rerank(toModelGroup(props.getRerank()))
+                .vlm(toModelGroup(props.getVlm()))
+                .selection(props.getSelection() == null
+                        ? null
+                        : AISettings.Selection.builder()
+                          .failureThreshold(props.getSelection().getFailureThreshold())
+                          .openDurationMs(props.getSelection().getOpenDurationMs())
+                          .build())
+                .stream(props.getStream() == null
+                        ? null
+                        : AISettings.Stream.builder()
+                          .messageChunkSize(props.getStream().getMessageChunkSize())
+                          .build())
                 .build();
+    }
+
+    private AISettings.ModelGroup toModelGroup(AIModelProperties.ModelGroup group) {
+        if (group == null) {
+            return null;
+        }
+        return AISettings.ModelGroup.builder()
+                .defaultModel(group.getDefaultModel())
+                .candidates(group.getCandidates() == null
+                        ? null
+                        : group.getCandidates().stream()
+                          .map(c -> AISettings.ModelCandidate.builder()
+                                    .id(c.getId())
+                                    .provider(c.getProvider())
+                                    .model(c.getModel())
+                                    .url(c.getUrl())
+                                    .dimension(c.getDimension())
+                                    .priority(c.getPriority())
+                                    .enabled(c.getEnabled())
+                                    .supportsThinking(c.getSupportsThinking())
+                                    .build())
+                          .collect(Collectors.toList()))
+                .defaultTier(group.getDefaultTier())
+                .deepThinkingTier(group.getDeepThinkingTier())
+                .tiers(toTiers(group.getTiers()))
+                .build();
+    }
+
+    private Map<String, AISettings.TierConfig> toTiers(Map<String, AIModelProperties.TierConfig> tiers) {
+        if (tiers == null) {
+            return null;
+        }
+        return tiers.entrySet().stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> AISettings.TierConfig.builder()
+                                .candidates(e.getValue().getCandidates())
+                                .timeoutMs(e.getValue().getTimeoutMs())
+                                .build()));
     }
 
     private String maskApiKey(String apiKey) {
         if (!StringUtils.hasText(apiKey)) {
             return null;
         }
-        if (apiKey.length() <= 8) {
-            return "****";
+        String trimmed = apiKey.trim();
+        if (trimmed.length() <= 10) {
+            return "******";
         }
-        return apiKey.substring(0, 4) + "****" + apiKey.substring(apiKey.length() - 4);
+        return trimmed.substring(0, 6) + "***" + trimmed.substring(trimmed.length() - 4);
     }
 }

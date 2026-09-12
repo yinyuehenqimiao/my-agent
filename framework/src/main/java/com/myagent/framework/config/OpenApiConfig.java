@@ -29,19 +29,19 @@ public class OpenApiConfig {
 
                                 **使用步骤**
                                 1. 调用 `POST /api/auth/login` 拿到 token
-                                2. 点击右上角 Authorize，填入 token（无需 Bearer 前缀）
+                                2. 点击右上角 Authorize，填入登录返回的 JWT
                                 3. 再测需要登录的接口
 
-                                认证对齐 ragent：Sa-Token（simple-uuid），请求头 `Authorization`。
+                                认证采用 JWT，请求头为 `Authorization: Bearer <JWT>`。
                                 """)
                         .version("0.0.1-SNAPSHOT")
                         .contact(new Contact().name("my-agent")))
                 .components(new Components().addSecuritySchemes(SECURITY_SCHEME,
                         new SecurityScheme()
-                                .name("Authorization")
-                                .type(SecurityScheme.Type.APIKEY)
-                                .in(SecurityScheme.In.HEADER)
-                                .description("登录返回的 Sa-Token，直接粘贴 token 值")))
+                                .type(SecurityScheme.Type.HTTP)
+                                .scheme("bearer")
+                                .bearerFormat("JWT")
+                                .description("登录返回的 JWT")))
                 .addSecurityItem(new SecurityRequirement().addList(SECURITY_SCHEME));
     }
 }

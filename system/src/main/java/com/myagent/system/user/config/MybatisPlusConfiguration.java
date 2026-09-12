@@ -17,7 +17,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
         "com.myagent.system.note.dao.mapper",
         "com.myagent.knowledge.dao.mapper",
         "com.myagent.ingestion.dao.mapper",
-        "com.myagent.rag.dao.mapper"
+        "com.myagent.rag.dao.mapper",
+        "com.myagent.agent.dao.mapper"
 })
 public class MybatisPlusConfiguration {
 

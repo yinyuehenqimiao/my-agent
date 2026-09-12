@@ -59,4 +59,3 @@ public class RetrievalConfigFailureAnalyzer extends AbstractFailureAnalyzer<Retr
         return new FailureAnalysis(description.toString(), action.toString(), cause);
     }
 }
-

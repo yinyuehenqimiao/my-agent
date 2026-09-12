@@ -27,4 +27,3 @@ import com.myagent.rag.core.intent.NodeScore;
  */
 public record IntentCandidate(int subQuestionIndex, NodeScore nodeScore) {
 }
-

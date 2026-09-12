@@ -101,4 +101,3 @@ public final class RetrievalChannelConfigValidator {
         return violations;
     }
 }
-

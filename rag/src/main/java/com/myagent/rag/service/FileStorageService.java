@@ -114,4 +114,3 @@ public interface FileStorageService {
      */
     void deleteKnowledgeSpace(String namespace);
 }
-

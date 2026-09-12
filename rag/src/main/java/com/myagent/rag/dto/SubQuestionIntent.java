@@ -29,4 +29,3 @@ import com.myagent.rag.core.intent.NodeScore;
  */
 public record SubQuestionIntent(String subQuestion, List<NodeScore> nodeScores) {
 }
-

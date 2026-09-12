@@ -25,6 +25,10 @@
             <groupId>com.myagent</groupId>
             <artifactId>rag</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.myagent</groupId>
+            <artifactId>agent</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

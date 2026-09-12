@@ -37,4 +37,3 @@ public record MessageDelta(String type, String delta) {
         return delta;
     }
 }
-

@@ -29,4 +29,3 @@ import com.myagent.rag.core.intent.NodeScore;
  */
 public record IntentGroup(List<NodeScore> mcpIntents, List<NodeScore> kbIntents) {
 }
-

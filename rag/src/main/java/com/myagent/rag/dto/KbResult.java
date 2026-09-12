@@ -34,4 +34,3 @@ public record KbResult(String groupedContext,
                        Map<String, List<RetrievedChunk>> intentChunks,
                        Set<String> eligibleIntentIds) {
 }
-

@@ -50,7 +50,7 @@ import java.util.concurrent.TimeUnit;
 public class DefaultFileStorageService implements FileStorageService {
 
     private static final Tika TIKA = new Tika();
-    private static final String LOCK_KEY_PREFIX = "myagent:kb:space:init:";
+    private static final String LOCK_KEY_PREFIX = "ragent:kb:space:init:";
     private static final long LOCK_WAIT_SECONDS = 30;
 
     private final ObjectStorageClient objectStorageClient;
@@ -80,10 +80,6 @@ public class DefaultFileStorageService implements FileStorageService {
         String detectedContentType;
         try (InputStream is = file.getInputStream()) {
             detectedContentType = TIKA.detect(is, originalFilename);
-        } catch (NoSuchMethodError | Exception ex) {
-            // commons-lang3 / compress 版本不齐时 Tika 可能炸；回退到浏览器声明类型或扩展名
-            log.warn("Tika MIME 探测失败，回退 contentType/扩展名: file={}, err={}", originalFilename, ex.toString());
-            detectedContentType = resolveContentType(originalFilename, file.getContentType());
         }
 
         // MultipartFile.getInputStream() 每次调用都返回新流（从底层临时文件重新打开），无需再创建临时文件
@@ -239,38 +235,8 @@ public class DefaultFileStorageService implements FileStorageService {
     }
 
     private String resolveContentType(String originalFilename, String contentType) {
-        if (contentType != null && !contentType.isBlank() && !"application/octet-stream".equalsIgnoreCase(contentType)) {
-            return contentType;
-        }
-        try {
-            if (originalFilename != null && !originalFilename.isBlank()) {
-                return TIKA.detect(originalFilename);
-            }
-        } catch (NoSuchMethodError | Exception ex) {
-            log.warn("Tika 按文件名探测失败: file={}, err={}", originalFilename, ex.toString());
-        }
-        if (originalFilename != null) {
-            String lower = originalFilename.toLowerCase();
-            if (lower.endsWith(".pdf")) return "application/pdf";
-            if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "text/markdown";
-            if (lower.endsWith(".txt")) return "text/plain";
-            if (lower.endsWith(".doc")) return "application/msword";
-            if (lower.endsWith(".docx")) {
-                return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-            }
-            if (lower.endsWith(".ppt")) return "application/vnd.ms-powerpoint";
-            if (lower.endsWith(".pptx")) {
-                return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-            }
-            if (lower.endsWith(".xls")) return "application/vnd.ms-excel";
-            if (lower.endsWith(".xlsx")) {
-                return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-            }
-            if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
-            if (lower.endsWith(".csv")) return "text/csv";
-            if (lower.endsWith(".json")) return "application/json";
-        }
-        return contentType != null && !contentType.isBlank() ? contentType : "application/octet-stream";
+        if (contentType != null && !contentType.isBlank()) return contentType;
+        if (originalFilename != null && !originalFilename.isBlank()) return TIKA.detect(originalFilename);
+        return null;
     }
 }
-

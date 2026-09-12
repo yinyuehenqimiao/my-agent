@@ -49,4 +49,3 @@ public record RecommendedQuestionsPayload(Status status, List<String> questions)
         FAILED
     }
 }
-

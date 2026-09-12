@@ -38,4 +38,3 @@ public class StoredFileDTO {
 
     private String originalFilename;
 }
-

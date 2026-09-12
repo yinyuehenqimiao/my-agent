@@ -1,0 +1,12 @@
+# Activate after applying resources/database/upgrades/v0.4.0/01_enterprise.sql.
+myagent:
+  engine:
+    type: agent
+  enterprise:
+    enabled: true
+    demo-enabled: true
+rag:
+  search:
+    channels:
+      web-search:
+        enabled: false

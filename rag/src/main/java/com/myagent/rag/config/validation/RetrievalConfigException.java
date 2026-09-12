@@ -40,4 +40,3 @@ public class RetrievalConfigException extends RuntimeException {
         this.violations = violations;
     }
 }
-

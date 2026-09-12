@@ -19,4 +19,3 @@ package com.myagent.rag.dto;
 
 public record MetaPayload(String conversationId, String taskId) {
 }
-

@@ -13,6 +13,7 @@
     <description>知识库上传/解析/分块/向量化（对齐 ragent）</description>
 
     <dependencies>
+        <dependency><groupId>com.myagent</groupId><artifactId>enterprise</artifactId></dependency>
         <dependency>
             <groupId>com.myagent</groupId>
             <artifactId>framework</artifactId>
@@ -101,6 +102,18 @@
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
+        </dependency><dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp-json-jackson2</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>co.elastic.clients</groupId>
+            <artifactId>elasticsearch-java</artifactId>
+        </dependency>
+
     </dependencies>
 </project>

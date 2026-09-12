@@ -41,4 +41,3 @@ public record CompletionPayload(String messageId, String title, List<SourceRef> 
         this(messageId, title, null, MessageStatus.NORMAL);
     }
 }
-

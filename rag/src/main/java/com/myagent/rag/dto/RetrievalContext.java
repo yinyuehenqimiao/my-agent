@@ -75,4 +75,3 @@ public class RetrievalContext {
         return !hasMcp() && !hasKb();
     }
 }
-

@@ -199,4 +199,3 @@ public enum DisplayType {
         return semicolon >= 0 ? normalized.substring(0, semicolon).trim() : normalized;
     }
 }
-

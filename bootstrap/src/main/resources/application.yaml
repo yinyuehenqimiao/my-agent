@@ -44,9 +44,31 @@ sa-token:
   timeout: 2592000
   is-concurrent: true
   is-share: false
-  token-style: simple-uuid
+  # 使用无状态 JWT；生产环境必须通过环境变量注入独立的高强度密钥。
+  token-style: jwt
+  token-prefix: Bearer
+  jwt-secret-key: ${SA_TOKEN_JWT_SECRET_KEY:myagent-local-development-jwt-secret-change-in-production-2026}
   is-log: false
   is-print: false
+
+myagent:
+  engine:
+    type: agent
+
+agent:
+  chat:
+    provider: siliconflow
+    model: deepseek-ai/DeepSeek-V3
+  max-iters: 10
+  max-retries: 2
+  sse-timeout-ms: 900000
+  memory:
+    enabled: true
+    tool-result:
+      trigger-chars: 20000
+      keep-recent-cycles: 2
+      clear-at-least-ratio: 0.2
+      evictable-tools: [ search_knowledge ]
 
 ai:
   providers:
@@ -67,6 +89,26 @@ ai:
     model: deepseek-ai/DeepSeek-V3
     temperature: 0.3
     max-tokens: 1024
+    candidates:
+      - id: deepseek-v3
+        provider: siliconflow
+        model: deepseek-ai/DeepSeek-V3
+      - id: deepseek-r1
+        provider: siliconflow
+        model: deepseek-ai/DeepSeek-R1
+        supports-thinking: true
+    default-tier: standard
+    deep-thinking-tier: deep
+    tiers:
+      fast:
+        candidates: [ deepseek-v3 ]
+        timeout-ms: 30000
+      standard:
+        candidates: [ deepseek-v3 ]
+        timeout-ms: 120000
+      deep:
+        candidates: [ deepseek-r1 ]
+        timeout-ms: 180000
   embedding:
     provider: siliconflow
     model: BAAI/bge-m3
@@ -85,15 +127,20 @@ ai:
         dimension: ${rag.default.dimension}
         priority: 2
         enabled: true
+  rerank:
+    default-model: noop-rerank
+    candidates:
+      - id: noop-rerank
+        provider: noop
+        model: noop
+        priority: 100
 
-# 对象存储 / 向量 / 上传限流（对齐本机 rustfs + RocketMQ）
 rag:
   storage:
     type: s3
     kb-bucket: myagent-sources
     asset-bucket: myagent-assets
     s3:
-      # 本机 docker 容器名 rustfs，账号与 ragent 一致
       endpoint: http://127.0.0.1:9000
       access-key: rustfsadmin
       secret-key: rustfsadmin
@@ -101,10 +148,49 @@ rag:
       path-style: true
   vector:
     type: pg
+  keyword:
+    type: none
+  graph:
+    type: none
   default:
     collection-name: myagent_default_store
     dimension: 1024
     metric-type: COSINE
+  query-rewrite:
+    enabled: true
+  rerank:
+    enabled: true
+  search:
+    default-top-k: 10
+    recall-budget: 20
+    scope:
+      min-intent-score: 0.4
+      confidence-threshold: 0.6
+      supplement-ratio: 0.25
+    channels:
+      timeout-ms: 15000
+      vector:
+        enabled: true
+      keyword:
+        enabled: false
+      graph:
+        enabled: false
+      web-search:
+        enabled: false
+        count: 5
+        timeout-seconds: 10
+        api-key: ${YDC_API_KEY:}
+    fusion:
+      strategy: rrf
+      rrf-k: 20
+      rerank-candidate-limit: 40
+      channel-weights:
+        vector: 1.0
+        keyword: 1.0
+        graph: 0.8
+        web-search: 0.5
+    evidence:
+      min-rerank-score: 0.2
   semaphore:
     document-upload:
       name: myagent:document:upload
