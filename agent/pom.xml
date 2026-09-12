@@ -23,5 +23,12 @@
             <groupId>io.agentscope</groupId>
             <artifactId>agentscope-extensions-model-openai</artifactId>
         </dependency>
+
+        <!-- 测试依赖：H2（路由决策测试） -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

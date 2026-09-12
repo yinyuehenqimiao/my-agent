@@ -63,7 +63,22 @@ public enum AgentSSEEventType {
     /**
      * 运行失败。错误详情仅返回可展示文案，不向客户端泄露模型服务的原始响应。
      */
-    ERROR("error");
+    ERROR("error"),
+
+    /**
+     * 路由决策 {decision, target, reason, confidence}
+     */
+    ROUTE_DECISION("route_decision"),
+
+    /**
+     * 工作流进度 {instanceId, node, status}
+     */
+    WORKFLOW_PROGRESS("workflow_progress"),
+
+    /**
+     * 策略拒绝 {reason}
+     */
+    POLICY_DENIED("policy_denied");
 
     private final String value;
 
