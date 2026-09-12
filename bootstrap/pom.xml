@@ -29,6 +29,10 @@
             <groupId>com.myagent</groupId>
             <artifactId>agent</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.myagent</groupId>
+            <artifactId>workflow</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
