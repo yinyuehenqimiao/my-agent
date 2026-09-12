@@ -15,6 +15,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 @MapperScan(basePackages = {
         "com.myagent.system.user.dao.mapper",
         "com.myagent.system.note.dao.mapper",
+        "com.myagent.system.auth.dao.mapper",
         "com.myagent.knowledge.dao.mapper",
         "com.myagent.ingestion.dao.mapper",
         "com.myagent.rag.dao.mapper",
