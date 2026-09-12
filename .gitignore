@@ -5,10 +5,16 @@ target/
 .project
 .settings/
 *.log
+.env
 .DS_Store
+# Stray compiled artifacts outside target/ (e.g. HashProbe.class probe output)
+*.class
 
 ### Frontend ###
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 frontend/.env.local
+# Local enterprise evaluation contains conversations and business identifiers.
+resources/enterprise/*.local.json
+resources/enterprise/*.local.png

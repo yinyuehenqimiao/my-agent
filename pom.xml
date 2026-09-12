@@ -14,9 +14,11 @@
     <modules>
         <module>framework</module>
         <module>system</module>
+        <module>enterprise</module>
         <module>infra-ai</module>
         <module>rag</module>
-        <module>bootstrap</module>
+                <module>agent</module>
+<module>bootstrap</module>
     </modules>
 
     <!-- 版本与 ragent/pom.xml 对齐 -->
@@ -39,12 +41,16 @@
         <batik.version>1.18</batik.version>
         <okhttp.version>5.3.2</okhttp.version>
         <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
+        <maven-surefire-plugin.version>3.5.6</maven-surefire-plugin.version>
         <!-- springdoc 3.x 适配 Spring Boot 4（ragent 未用，my-agent 保留 Swagger UI） -->
         <springdoc.version>3.0.0</springdoc.version>
+        <agentscope.version>2.0.2</agentscope.version>
+        <mcp-sdk.version>1.1.2</mcp-sdk.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <dependency><groupId>com.myagent</groupId><artifactId>enterprise</artifactId><version>${project.version}</version></dependency>
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
@@ -89,6 +95,33 @@
                 <artifactId>rag</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>io.agentscope</groupId>
+                <artifactId>agentscope-core</artifactId>
+                <version>${agentscope.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.agentscope</groupId>
+                <artifactId>agentscope-extensions-model-openai</artifactId>
+                <version>${agentscope.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.modelcontextprotocol.sdk</groupId>
+                <artifactId>mcp</artifactId>
+                <version>${mcp-sdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.modelcontextprotocol.sdk</groupId>
+                <artifactId>mcp-json-jackson2</artifactId>
+                <version>${mcp-sdk.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.myagent</groupId>
+                <artifactId>agent</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
 
             <dependency>
                 <groupId>cn.hutool</groupId>
@@ -199,6 +232,11 @@
             <artifactId>spring-boot-jackson2</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <scope>provided</scope>
@@ -230,12 +268,21 @@
                         <parameters>true</parameters>
                     </configuration>
                 </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${maven-surefire-plugin.version}</version>
+                </plugin>
             </plugins>
         </pluginManagement>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
             </plugin>
         </plugins>
     </build>
