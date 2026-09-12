@@ -8,6 +8,12 @@ import com.myagent.workflow.service.WorkflowVersionService;
 import org.junit.jupiter.api.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
@@ -75,5 +81,40 @@ class WorkflowAdminControllerTest {
     void auditRequiresAuditViewPermission() {
         doThrow(new ClientException("无权限")).when(policy).requirePermission(any(), eq("audit:view"));
         assertThatThrownBy(() -> controller.audit(100)).isInstanceOf(ClientException.class);
+    }
+
+    @Test
+    void definitionDetailUsesFrontendFriendlyFieldsAndIncludesBpmnXml() {
+        Map<String, Object> definition = new HashMap<>();
+        definition.put("id", 7L);
+        definition.put("def_key", "leave-approval");
+        definition.put("name", "请假审批");
+        definition.put("description", "两级审批");
+        definition.put("current_published_version_id", 71L);
+        definition.put("update_time", Timestamp.from(Instant.parse("2026-09-12T08:00:00Z")));
+        Map<String, Object> version = new HashMap<>();
+        version.put("id", 71L);
+        version.put("version_number", 1);
+        version.put("status", "PUBLISHED");
+        version.put("created_by", "editor");
+        version.put("created_time", Timestamp.from(Instant.parse("2026-09-12T07:00:00Z")));
+        version.put("published_time", Timestamp.from(Instant.parse("2026-09-12T08:00:00Z")));
+        version.put("published_by", "publisher");
+        version.put("bpmn_xml", "<definitions/>");
+        when(jdbc.queryForMap(anyString(), eq("leave-approval"))).thenReturn(definition);
+        when(jdbc.queryForList(anyString(), eq(7L))).thenReturn(List.of(version));
+
+        var result = controller.getDefinition("leave-approval");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = (Map<String, Object>) result.getData();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> mappedDefinition = (Map<String, Object>) data.get("definition");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> mappedVersion = (Map<String, Object>) ((List<?>) data.get("versions")).get(0);
+
+        assertThat(mappedDefinition).containsEntry("defKey", "leave-approval");
+        assertThat(mappedDefinition).doesNotContainKey("def_key");
+        assertThat(mappedVersion).containsEntry("versionNumber", 1).containsEntry("bpmnXml", "<definitions/>");
+        verify(policy).requirePermission(any(), eq("workflow:view"));
     }
 }

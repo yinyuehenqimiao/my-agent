@@ -1,21 +1,34 @@
 import { api } from "@/services/api";
 
+export type WfVersionStatus =
+  | "DRAFT"
+  | "IN_REVIEW"
+  | "APPROVED"
+  | "PUBLISHED"
+  | "REJECTED"
+  | "RETIRED";
+
 export interface WfDefinition {
   id: number;
   defKey: string;
   name: string;
   description?: string | null;
   currentPublishedVersionId?: number | null;
+  publishedVersionNumber?: number | null;
+  latestVersionNumber?: number | null;
+  latestStatus?: WfVersionStatus | null;
+  updateTime?: string | null;
 }
 
 export interface WfVersion {
   id: number;
   versionNumber: number;
-  status: "DRAFT" | "IN_REVIEW" | "APPROVED" | "PUBLISHED" | "REJECTED" | "RETIRED";
+  status: WfVersionStatus;
   createdBy: string;
   createdTime: string;
   publishedTime?: string | null;
   publishedBy?: string | null;
+  bpmnXml?: string | null;
 }
 
 export interface WfDefinitionDetail {
@@ -47,8 +60,18 @@ export interface AuditEntry {
   targetType?: string | null;
   targetId?: string | null;
   traceId?: string | null;
+  detail?: string | null;
   createdTime: string;
 }
+
+export const WF_STATUS_LABEL: Record<WfVersionStatus, string> = {
+  DRAFT: "草稿",
+  IN_REVIEW: "待审核",
+  APPROVED: "审核通过",
+  PUBLISHED: "已发布",
+  REJECTED: "已驳回",
+  RETIRED: "已停用"
+};
 
 export const workflowService = {
   listDefinitions: () =>
@@ -79,5 +102,5 @@ export const workflowService = {
     api.post<void>(`/api/workflow/definitions/${defId}/rollback/${versionId}`),
 
   listAudit: (limit = 100) =>
-    api.get<AuditEntry[]>(`/api/workflow/audit?limit=${limit}`),
+    api.get<AuditEntry[]>(`/api/workflow/audit?limit=${limit}`)
 };

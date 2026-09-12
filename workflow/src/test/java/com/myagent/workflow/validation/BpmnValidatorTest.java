@@ -29,6 +29,45 @@ class BpmnValidatorTest {
     }
 
     @Test
+    void designerExportWithBpmnPrefixesAndDiagramMetadataPasses() {
+        String xml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI">
+                  <bpmn:process id="p1" isExecutable="true">
+                    <bpmn:startEvent id="s"/>
+                    <bpmn:sequenceFlow id="f1" sourceRef="s" targetRef="e"/>
+                    <bpmn:endEvent id="e"/>
+                  </bpmn:process>
+                  <bpmndi:BPMNDiagram id="diagram">
+                    <bpmndi:BPMNPlane id="plane" bpmnElement="p1">
+                      <bpmndi:BPMNEdge id="edge" bpmnElement="f1">
+                        <di:waypoint x="1" y="1"/>
+                        <di:waypoint x="2" y="2"/>
+                      </bpmndi:BPMNEdge>
+                    </bpmndi:BPMNPlane>
+                  </bpmndi:BPMNDiagram>
+                </bpmn:definitions>
+                """;
+
+        assertTrue(validator.validateSyntaxAndNodes(xml).valid());
+        assertTrue(validator.validateForPublish(xml).valid());
+    }
+
+    @Test
+    void standardNestedConditionExpressionUsesWhitelist() {
+        String xml = bpmn("<startEvent id=\"s\"/><exclusiveGateway id=\"g\"/>"
+                + "<sequenceFlow id=\"f1\" sourceRef=\"s\" targetRef=\"g\"/>"
+                + "<sequenceFlow id=\"f2\" sourceRef=\"g\" targetRef=\"e\">"
+                + "<conditionExpression xsi:type=\"tFormalExpression\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">${decision == 'APPROVE'}</conditionExpression>"
+                + "</sequenceFlow><endEvent id=\"e\"/>");
+
+        assertTrue(validator.validateSyntaxAndNodes(xml).valid());
+    }
+
+    @Test
     void scriptTaskRejected() {
         String xml = bpmn("<startEvent id=\"s\"/><scriptTask id=\"st\" scriptFormat=\"groovy\"><script>1+1</script></scriptTask>"
                 + "<sequenceFlow id=\"f1\" sourceRef=\"s\" targetRef=\"st\"/><sequenceFlow id=\"f2\" sourceRef=\"st\" targetRef=\"e\"/><endEvent id=\"e\"/>");

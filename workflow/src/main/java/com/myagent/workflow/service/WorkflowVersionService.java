@@ -14,7 +14,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.PreparedStatement;
-import java.sql.Statement;
 
 /**
  * 工作流版本生命周期服务：草稿 -> 审核 -> 发布 -> 退休，支持回滚。
@@ -37,28 +36,33 @@ public class WorkflowVersionService {
         validateBpmn(bpmnXml);
         KeyHolder defKeyHolder = new GeneratedKeyHolder();
         jdbc.update(con -> {
+            // 显式指定 id 列：PostgreSQL RETURN_GENERATED_KEYS 会返回整行，getKey() 会因多列失败
             PreparedStatement ps = con.prepareStatement(
                     "INSERT INTO wf_definition(def_key,name,description,tenant_id,create_time,update_time) VALUES(?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
-                    Statement.RETURN_GENERATED_KEYS);
+                    new String[]{"id"});
             ps.setString(1, defKey);
             ps.setString(2, name);
             ps.setString(3, description);
             ps.setString(4, "default");
             return ps;
         }, defKeyHolder);
-        Long defId = defKeyHolder.getKey().longValue();
+        Long defId = generatedId(defKeyHolder);
         Long versionId = insertVersion(defId, 1, bpmnXml, creator, null);
+        writeAudit("WF_CREATE", creator, "wf_definition", String.valueOf(defId),
+                "defKey=" + defKey + ",versionId=" + versionId);
         return getVersion(versionId);
     }
 
     @Transactional
     public WfVersionDO newVersionFrom(Long sourceVersionId, String bpmnXml, String editor) {
         WfVersionDO source = getVersion(sourceVersionId);
-        if (VersionStatus.PUBLISHED.name().equals(source.getStatus()))
-            throw new ClientException("已发布版本不可编辑，请基于其创建新版本");
+        // 这里创建的是一条全新的草稿记录，并不会修改来源版本。
+        // 已发布版本正是最常见的迭代基线，因此允许作为新版本来源。
         validateBpmn(bpmnXml);
         int next = nextVersionNumber(source.getDefinitionId());
         Long id = insertVersion(source.getDefinitionId(), next, bpmnXml, editor, source.getId());
+        writeAudit("WF_NEW_VERSION", editor, "wf_version", String.valueOf(id),
+                "fromVersionId=" + sourceVersionId + ",definitionId=" + source.getDefinitionId());
         return getVersion(id);
     }
 
@@ -67,6 +71,7 @@ public class WorkflowVersionService {
         WfVersionDO v = getVersion(versionId);
         requireStatus(v, VersionStatus.DRAFT, "仅草稿可提交审核");
         updateStatus(v, VersionStatus.IN_REVIEW);
+        writeAudit("WF_SUBMIT_REVIEW", submitter, "wf_version", String.valueOf(versionId), null);
     }
 
     @Transactional
@@ -78,6 +83,7 @@ public class WorkflowVersionService {
         jdbc.update("INSERT INTO wf_review(version_id,reviewer_id,action,comment,created_time) VALUES(?,?,?,?,CURRENT_TIMESTAMP)",
                 versionId, reviewer, approve ? "APPROVE" : "REJECT", comment);
         updateStatus(v, approve ? VersionStatus.APPROVED : VersionStatus.REJECTED);
+        writeAudit(approve ? "WF_APPROVE" : "WF_REJECT", reviewer, "wf_version", String.valueOf(versionId), comment);
     }
 
     @Transactional
@@ -90,6 +96,8 @@ public class WorkflowVersionService {
                 VersionStatus.PUBLISHED.name(), publisher, versionId);
         jdbc.update("UPDATE wf_definition SET current_published_version_id=?,update_time=CURRENT_TIMESTAMP WHERE id=?",
                 versionId, v.getDefinitionId());
+        writeAudit("WF_PUBLISH", publisher, "wf_version", String.valueOf(versionId),
+                "definitionId=" + v.getDefinitionId());
     }
 
     @Transactional
@@ -98,6 +106,7 @@ public class WorkflowVersionService {
         requireStatus(v, VersionStatus.PUBLISHED, "仅已发布版本可退休");
         jdbc.update("UPDATE wf_version SET status=?,updated_time=CURRENT_TIMESTAMP WHERE id=?", VersionStatus.RETIRED.name(), versionId);
         jdbc.update("UPDATE wf_definition SET current_published_version_id=NULL,update_time=CURRENT_TIMESTAMP WHERE current_published_version_id=?", versionId);
+        writeAudit("WF_RETIRE", operator, "wf_version", String.valueOf(versionId), null);
     }
 
     @Transactional
@@ -106,6 +115,8 @@ public class WorkflowVersionService {
                 Integer.class, targetVersionId, definitionId, VersionStatus.PUBLISHED.name());
         if (cnt == null || cnt == 0) throw new ClientException("回滚目标版本不存在或非已发布");
         jdbc.update("UPDATE wf_definition SET current_published_version_id=?,update_time=CURRENT_TIMESTAMP WHERE id=?", targetVersionId, definitionId);
+        writeAudit("WF_ROLLBACK", operator, "wf_definition", String.valueOf(definitionId),
+                "targetVersionId=" + targetVersionId);
     }
 
     // ===== 内部 =====
@@ -116,7 +127,7 @@ public class WorkflowVersionService {
             PreparedStatement ps = con.prepareStatement(
                     "INSERT INTO wf_version(definition_id,version_number,bpmn_xml,status,created_by,created_time,updated_time,parent_version_id) "
                             + "VALUES(?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,?)",
-                    Statement.RETURN_GENERATED_KEYS);
+                    new String[]{"id"});
             ps.setLong(1, definitionId);
             ps.setInt(2, number);
             ps.setString(3, bpmnXml);
@@ -125,7 +136,24 @@ public class WorkflowVersionService {
             if (parentId == null) ps.setNull(6, java.sql.Types.BIGINT); else ps.setLong(6, parentId);
             return ps;
         }, kh);
-        return kh.getKey().longValue();
+        return generatedId(kh);
+    }
+
+    /** 从 KeyHolder 取自增 id；兼容 H2 单列与 PostgreSQL 多列返回。 */
+    private static Long generatedId(KeyHolder holder) {
+        var keys = holder.getKeys();
+        if (keys != null && !keys.isEmpty()) {
+            Object id = keys.containsKey("id") ? keys.get("id") : keys.values().iterator().next();
+            if (id instanceof Number n) {
+                return n.longValue();
+            }
+            throw new IllegalStateException("自增主键类型异常: " + id);
+        }
+        Number key = holder.getKey();
+        if (key != null) {
+            return key.longValue();
+        }
+        throw new IllegalStateException("未获取到自增主键");
     }
 
     private int nextVersionNumber(Long definitionId) {
@@ -163,5 +191,11 @@ public class WorkflowVersionService {
 
     private void updateStatus(WfVersionDO v, VersionStatus status) {
         jdbc.update("UPDATE wf_version SET status=?,updated_time=CURRENT_TIMESTAMP WHERE id=?", status.name(), v.getId());
+    }
+
+    private void writeAudit(String operation, String operatorId, String targetType, String targetId, String detail) {
+        jdbc.update(
+                "INSERT INTO operation_audit(operation,operator_id,target_type,target_id,tenant_id,detail,created_time) VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)",
+                operation, operatorId, targetType, targetId, "default", detail);
     }
 }
