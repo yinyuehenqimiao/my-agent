@@ -40,6 +40,9 @@ class EnterpriseWorkflowTest {
         @Bean Clock clock() { return Clock.fixed(Instant.parse("2026-09-10T02:00:00Z"),ZoneId.of("Asia/Shanghai")); }
         @Bean EnterpriseService service(EnterpriseMapper mapper,ObjectMapper json,Clock clock) { return new EnterpriseService(mapper,json,clock); }
         @Bean PlatformTransactionManager tx(DataSource ds) { return new DataSourceTransactionManager(ds); }
+        @Bean com.myagent.system.auth.service.PolicyDecisionService policy(JdbcTemplate jdbc) {
+            return new com.myagent.system.auth.service.impl.PolicyDecisionServiceImpl(jdbc);
+        }
     }
     @Autowired EnterpriseService service;
     @Autowired JdbcTemplate jdbc;
