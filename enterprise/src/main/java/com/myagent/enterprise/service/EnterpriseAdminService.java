@@ -5,6 +5,7 @@ import com.myagent.enterprise.dto.EnterpriseTypes.*;
 import com.myagent.framework.exception.ClientException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.util.List;
@@ -15,6 +16,17 @@ import java.util.Set;
 public class EnterpriseAdminService {
     private final EnterpriseMapper db;
     private final KnowledgeAccessService access;
+    @Value("${myagent.enterprise.adapter:LOCAL}") private String adapterMode;
+    @Value("${myagent.enterprise.erp.base-url:}") private String erpBaseUrl;
+    @Value("${myagent.enterprise.erp.service-token:}") private String erpServiceToken;
+    public ErpConnectionStatus erpStatus() {
+        access.requireAdmin();
+        if (!"HTTP_ERP".equalsIgnoreCase(adapterMode)) return new ErpConnectionStatus("本地企业数据", true, "当前使用本地开发数据，不会访问外部 ERP。", "如需切换独立 ERP，请由部署管理员设置 ENTERPRISE_ADAPTER=HTTP_ERP。");
+        boolean configured = erpBaseUrl != null && !erpBaseUrl.isBlank() && erpServiceToken != null && !erpServiceToken.isBlank();
+        return new ErpConnectionStatus("独立 ERP 服务", configured,
+                configured ? "已配置受控 ERP 地址和服务凭证。" : "ERP 地址或服务凭证尚未配置，系统将拒绝 ERP 请求。",
+                configured ? "可由部署管理员执行受控健康检查。" : "请在部署环境设置 ERP_BASE_URL 与 ERP_SERVICE_TOKEN，不要在页面输入凭证。");
+    }
     public List<Employee> employees() { access.requireAdmin(); return db.list(Employee.class,"SELECT * FROM ent_employee ORDER BY display_name"); }
     @Transactional public void employee(String id,Employee e) {
         access.requireAdmin();access.identity(id);

@@ -19,6 +19,7 @@ import java.util.List;
 public class EnterpriseAdminController {
     private final EnterpriseAdminService service;
     private final KnowledgeAccessService access;
+    @GetMapping("/erp/status") public Result<ErpConnectionStatus> erpStatus() { return Results.success(service.erpStatus()); }
     @GetMapping("/employees") public Result<List<Employee>> employees() {return Results.success(service.employees());}
     @PutMapping("/employees/{id}") public Result<Void> employee(@PathVariable String id,@RequestBody Employee e) {service.employee(id,e);return Results.success();}
     @GetMapping("/knowledge/{id}/grants") public Result<List<Grant>> grants(@PathVariable String id) {return Results.success(service.grants(id));}

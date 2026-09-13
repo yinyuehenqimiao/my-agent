@@ -36,4 +36,5 @@ public final class EnterpriseTypes {
                         @NotBlank @Size(max=100) String subject) { }
     public record Policy(@NotBlank @Size(max=64) String version, @NotNull LocalDate effectiveDate) { }
     public record Workday(@JsonFormat(shape=JsonFormat.Shape.STRING) LocalDate day, boolean working, String description) { }
+    public record ErpConnectionStatus(String mode, boolean configured, String summary, String nextStep) { }
 }
