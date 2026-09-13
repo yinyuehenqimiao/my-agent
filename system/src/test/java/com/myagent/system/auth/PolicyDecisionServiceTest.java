@@ -92,9 +92,13 @@ class PolicyDecisionServiceTest {
     @AfterEach void cleanup() { UserContext.clear(); }
 
     private LoginUser identity(long userId, String username, String enterpriseRole) {
+        return identity(userId, username, enterpriseRole, "default");
+    }
+
+    private LoginUser identity(long userId, String username, String enterpriseRole, String tenantId) {
         return LoginUser.builder()
                 .userId(String.valueOf(userId)).username(username).role("user")
-                .tenantId("default").platformRoles(policy.rolesOf(userId))
+                .tenantId(tenantId).platformRoles(policy.rolesOf(userId))
                 .enterpriseRole(enterpriseRole).build();
     }
 
@@ -183,5 +187,20 @@ class PolicyDecisionServiceTest {
     @Test void missingIdentityFailsClosed() {
         UserContext.clear();
         assertThrows(ClientException.class, () -> policy.requirePermission(UserContext.requireIdentity(), "workflow:view"));
+    }
+
+    @Test void permissionLookupCannotReuseSameUserIdFromAnotherTenant() {
+        LoginUser otherTenantIdentity = identity(editorUser, "editor-b", "EMPLOYEE", "tenant-b");
+
+        assertFalse(policy.hasPermission(otherTenantIdentity, "workflow:edit"));
+    }
+
+    @Test void auditStorageFailureIsObservableAndPermissionStillFailsClosed() {
+        jdbc.execute("DROP TABLE sys_auth_audit");
+        LoginUser editor = identity(editorUser, "editor", "EMPLOYEE");
+
+        assertThrows(ClientException.class, () -> policy.requirePermission(editor, "workflow:review"));
+
+        assertEquals(1L, ((PolicyDecisionServiceImpl) policy).auditWriteFailureCount());
     }
 }

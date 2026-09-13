@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 权限决策实现：JdbcTemplate 驱动、默认拒绝、拒绝写审计。
@@ -30,12 +31,14 @@ public class PolicyDecisionServiceImpl implements com.myagent.system.auth.servic
                     + "JOIN sys_role_permission rp ON ur.role_code = rp.role_code "
                     + "JOIN sys_role r ON ur.role_code = r.role_code AND r.enabled = TRUE "
                     + "JOIN sys_permission p ON rp.perm_code = p.perm_code AND p.enabled = TRUE "
-                    + "WHERE ur.user_id = ? AND ur.tenant_id = 'default'";
+                    + "WHERE ur.user_id = ? AND ur.tenant_id = ?";
 
     private static final String SQL_ROLES =
             "SELECT ur.role_code FROM sys_user_role ur "
                     + "JOIN sys_role r ON ur.role_code = r.role_code AND r.enabled = TRUE "
                     + "WHERE ur.user_id = ? AND ur.tenant_id = 'default'";
+
+    private final AtomicLong auditWriteFailures = new AtomicLong();
 
     @Override
     public boolean hasPermission(ExecutionIdentity identity, String permCode) {
@@ -48,7 +51,11 @@ public class PolicyDecisionServiceImpl implements com.myagent.system.auth.servic
         } catch (NumberFormatException e) {
             return false;
         }
-        return permissionsOf(userId).contains(permCode);
+        String tenantId = identity.getTenantId();
+        if (tenantId == null || tenantId.isBlank()) {
+            return false;
+        }
+        return permissionsOf(userId, tenantId).contains(permCode);
     }
 
     @Override
@@ -73,11 +80,15 @@ public class PolicyDecisionServiceImpl implements com.myagent.system.auth.servic
 
     @Override
     public List<String> permissionsOf(Long userId) {
+        return permissionsOf(userId, "default");
+    }
+
+    private List<String> permissionsOf(Long userId, String tenantId) {
         if (userId == null) {
             return Collections.emptyList();
         }
         try {
-            return jdbc.queryForList(SQL_PERMS, String.class, userId);
+            return jdbc.queryForList(SQL_PERMS, String.class, userId, tenantId);
         } catch (Exception e) {
             // 表不存在等异常时 fail-closed
             return Collections.emptyList();
@@ -107,7 +118,14 @@ public class PolicyDecisionServiceImpl implements com.myagent.system.auth.servic
                     identity == null ? "default" : identity.getTenantId(),
                     permCode, "DENY", reason, UUID.randomUUID().toString());
         } catch (Exception e) {
-            log.warn("写入鉴权审计失败: {}", e.getMessage());
+            long failures = auditWriteFailures.incrementAndGet();
+            log.error("security_audit_write_failure count={} permCode={} error={}",
+                    failures, permCode, e.getMessage());
         }
+    }
+
+    /** 供健康检查和指标桥接读取；每次鉴权审计落库失败单调递增。 */
+    public long auditWriteFailureCount() {
+        return auditWriteFailures.get();
     }
 }
