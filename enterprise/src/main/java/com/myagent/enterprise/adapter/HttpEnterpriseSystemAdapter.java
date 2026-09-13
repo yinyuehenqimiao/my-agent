@@ -60,16 +60,17 @@ public class HttpEnterpriseSystemAdapter implements EnterpriseSystemPort {
     public LeaveRequestResult createLeaveRequest(ExecutionIdentity identity, LeaveRequestCommand command) {
         try {
             String payload = mapper.writeValueAsString(java.util.Map.of("startDate", command.getStartDate(), "endDate", command.getEndDate(), "reason", command.getReason()));
-            JsonNode data = request(identity, "/api/erp/v1/leave-requests", "POST", payload, command.getIdempotencyKey());
+            JsonNode data = request(identity, "/api/erp/v1/leave-requests", "POST", payload, command.getIdempotencyKey(), command.getTraceId());
             return new LeaveRequestResult(text(data, "id"), text(data, "status"), command.getTraceId());
         } catch (ClientException exception) { throw exception; } catch (Exception exception) { throw new ClientException("ERP 服务暂时不可用，请稍后重试"); }
     }
 
-    private JsonNode get(ExecutionIdentity identity, String path) { return request(identity, path, "GET", null, null); }
-    private JsonNode request(ExecutionIdentity identity, String path, String method, String payload, String idempotencyKey) {
+    private JsonNode get(ExecutionIdentity identity, String path) { return request(identity, path, "GET", null, null, com.myagent.framework.trace.RagTraceContext.getTraceId()); }
+    private JsonNode request(ExecutionIdentity identity, String path, String method, String payload, String idempotencyKey, String traceId) {
         if (identity == null || blank(identity.getUserId()) || blank(identity.getTenantId()) || blank(serviceToken) || blank(baseUrl)) throw new ClientException("ERP 连接或执行身份未配置，拒绝执行");
         try {
-            var builder = java.net.http.HttpRequest.newBuilder(java.net.URI.create(baseUrl + path)).timeout(java.time.Duration.ofSeconds(3)).header("X-ERP-Service-Token", serviceToken).header("X-Tenant-Id", identity.getTenantId()).header("X-Employee-Id", identity.getUserId()).header("X-Trace-Id", java.util.UUID.randomUUID().toString());
+            String resolvedTraceId = blank(traceId) ? java.util.UUID.randomUUID().toString() : traceId;
+            var builder = java.net.http.HttpRequest.newBuilder(java.net.URI.create(baseUrl + path)).timeout(java.time.Duration.ofSeconds(3)).header("X-ERP-Service-Token", serviceToken).header("X-Tenant-Id", identity.getTenantId()).header("X-Employee-Id", identity.getUserId()).header("X-Trace-Id", resolvedTraceId);
             if (idempotencyKey != null) builder.header("Idempotency-Key", idempotencyKey);
             var request = "POST".equals(method) ? builder.header("Content-Type", "application/json").POST(java.net.http.HttpRequest.BodyPublishers.ofString(payload)).build() : builder.GET().build();
             var response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
