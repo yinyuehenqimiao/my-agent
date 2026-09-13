@@ -22,12 +22,15 @@ import static org.mockito.Mockito.*;
 class ToolGatewayImplTest {
 
     private PolicyDecisionService policy;
+    private ToolExecutionAuditService audit;
     private ToolGatewayImpl gateway;
 
     @BeforeEach
     void setup() {
         policy = mock(PolicyDecisionService.class);
-        gateway = new ToolGatewayImpl(policy, new ObjectMapper().findAndRegisterModules());
+        audit = mock(ToolExecutionAuditService.class);
+        when(audit.record(any(), anyString(), anyString(), anyString(), anyLong())).thenReturn(true);
+        gateway = new ToolGatewayImpl(policy, new ObjectMapper().findAndRegisterModules(), audit);
     }
 
     private LoginUser identity(String userId) {
@@ -176,5 +179,48 @@ class ToolGatewayImplTest {
 
         assertEquals(List.of("a_tool", "z_tool"), definitions.stream().map(ToolDefinition::getName).toList());
         assertThrows(UnsupportedOperationException.class, () -> definitions.add(readOnlyDef("bad", null)));
+    }
+
+    @Test
+    void writeToolDoesNotExecuteWhenDurablePreAuditIsUnavailable() {
+        var handler = mock(com.myagent.framework.tool.ToolHandler.class);
+        gateway.register(writeDef("write_tool"), handler);
+        when(audit.record(any(), anyString(), eq("BEFORE_EXECUTION"), eq("READY"), anyLong())).thenReturn(false);
+
+        ToolResult result = gateway.invoke(ToolInvocation.builder().toolName("write_tool")
+                .identity(identity("u")).source(Source.REACT).input(Map.of("reason", "test"))
+                .idempotencyKey("key-1").build());
+
+        assertEquals("AUDIT_UNAVAILABLE", result.getErrorCode());
+        verifyNoInteractions(handler);
+    }
+
+    @Test
+    void readOnlyToolMayDegradeWhenAuditStorageIsUnavailable() {
+        gateway.register(readOnlyDef("ro", null), invocation -> ToolResult.success("ok", invocation.getTraceId()));
+        when(audit.record(any(), anyString(), anyString(), anyString(), anyLong())).thenReturn(false);
+
+        ToolResult result = gateway.invoke(ToolInvocation.builder().toolName("ro").identity(identity("u"))
+                .source(Source.REACT).input(Map.of("q", "x")).build());
+
+        assertEquals(ToolResult.State.SUCCESS, result.getState());
+    }
+
+    @Test
+    void writeToolReturnsUncertainResultWhenCompletionAuditFails() throws Exception {
+        var handler = mock(com.myagent.framework.tool.ToolHandler.class);
+        when(handler.handle(any())).thenAnswer(invocation ->
+                ToolResult.success("done", invocation.<ToolInvocation>getArgument(0).getTraceId()));
+        gateway.register(writeDef("write_tool"), handler);
+        when(audit.record(any(), anyString(), eq("BEFORE_EXECUTION"), eq("READY"), anyLong())).thenReturn(true);
+        when(audit.record(any(), anyString(), eq("COMPLETED"), eq("SUCCESS"), anyLong())).thenReturn(false);
+
+        ToolResult result = gateway.invoke(ToolInvocation.builder().toolName("write_tool")
+                .identity(identity("u")).source(Source.REACT).input(Map.of("reason", "test"))
+                .idempotencyKey("key-1").build());
+
+        assertEquals("AUDIT_INCOMPLETE", result.getErrorCode());
+        assertTrue(result.getMessage().contains("请勿重复提交"));
+        verify(handler, times(1)).handle(any());
     }
 }

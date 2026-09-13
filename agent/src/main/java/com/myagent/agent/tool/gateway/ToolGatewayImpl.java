@@ -37,6 +37,7 @@ public class ToolGatewayImpl implements ToolGateway {
 
     private final PolicyDecisionService policyDecisionService;
     private final ObjectMapper objectMapper;
+    private final ToolExecutionAuditService executionAuditService;
 
     private final Map<String, ToolEntry> registry = new ConcurrentHashMap<>();
     private final ExecutorService executionPool = Executors.newCachedThreadPool(r -> {
@@ -72,6 +73,7 @@ public class ToolGatewayImpl implements ToolGateway {
     @Override
     public ToolResult invoke(ToolInvocation invocation) {
         String traceId = ensureTrace(invocation);
+        long startedNanos = System.nanoTime();
         // 1. 执行身份获取（fail-closed）
         ExecutionIdentity identity = invocation.getIdentity();
         if (identity == null || identity.getUserId() == null) {
@@ -123,11 +125,24 @@ public class ToolGatewayImpl implements ToolGateway {
             }
         }
         // 8. 执行（超时 + 重试）
+        if (requiresDurableAudit(def)
+                && !executionAuditService.record(invocation, traceId, "BEFORE_EXECUTION", "READY", 0L)) {
+            log.error("tool-gateway denied because durable audit is unavailable tool={} traceId={}",
+                    invocation.getToolName(), traceId);
+            return ToolResult.error("AUDIT_UNAVAILABLE", "审计服务暂不可用，为保护业务数据，本次操作未执行", traceId);
+        }
         ToolResult result = executeWithTimeoutAndRetry(entry, invocation, traceId);
         // 9. 脱敏（输出中敏感字段）
         ToolResult masked = maskResult(def, result, traceId);
         // 10. 审计
-        audit(invocation, traceId, masked.getState().name(), "tool=" + invocation.getToolName() + " state=" + masked.getState());
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
+        boolean persisted = executionAuditService.record(
+                invocation, traceId, "COMPLETED", masked.getState().name(), elapsedMs);
+        logAudit(invocation, traceId, masked.getState().name(),
+                "tool=" + invocation.getToolName() + " state=" + masked.getState());
+        if (!persisted && requiresDurableAudit(def)) {
+            return ToolResult.error("AUDIT_INCOMPLETE", "操作结果暂无法完成审计，请勿重复提交并联系管理员核验", traceId);
+        }
         return masked;
     }
 
@@ -227,15 +242,26 @@ public class ToolGatewayImpl implements ToolGateway {
     }
 
     private String ensureTrace(ToolInvocation invocation) {
-        if (invocation.getTraceId() != null && !invocation.getTraceId().isBlank()) return invocation.getTraceId();
-        return UUID.randomUUID().toString();
+        String traceId = invocation.getTraceId() != null && !invocation.getTraceId().isBlank()
+                ? invocation.getTraceId() : UUID.randomUUID().toString();
+        invocation.setTraceId(traceId);
+        return traceId;
     }
 
     private void audit(ToolInvocation invocation, String traceId, String action, String reason) {
+        executionAuditService.record(invocation, traceId, "DECISION", action, 0L);
+        logAudit(invocation, traceId, action, reason);
+    }
+
+    private void logAudit(ToolInvocation invocation, String traceId, String action, String reason) {
         // 日志脱敏：不打印完整输入参数
         log.info("tool-gateway action={} tool={} user={} traceId={} reason={}",
                 action, invocation.getToolName(),
                 invocation.getIdentity() == null ? null : invocation.getIdentity().getUserId(),
                 traceId, reason);
+    }
+
+    private boolean requiresDurableAudit(ToolDefinition definition) {
+        return !definition.isReadOnly() || definition.getRiskLevel() == ToolDefinition.RiskLevel.HIGH;
     }
 }

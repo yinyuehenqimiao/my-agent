@@ -2,6 +2,7 @@ package com.myagent.agent.tool;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myagent.agent.tool.gateway.ToolGatewayImpl;
+import com.myagent.agent.tool.gateway.ToolExecutionAuditService;
 import com.myagent.enterprise.dto.EnterpriseTypes.*;
 import com.myagent.enterprise.service.EnterpriseService;
 import com.myagent.framework.exception.ClientException;
@@ -21,11 +22,13 @@ import static org.mockito.Mockito.*;
 class EnterpriseToolsTest {
     private final EnterpriseService service = mock(EnterpriseService.class);
     private final PolicyDecisionService policy = mock(PolicyDecisionService.class);
-    private final ToolGatewayImpl gateway = new ToolGatewayImpl(policy, new ObjectMapper().findAndRegisterModules());
+    private final ToolExecutionAuditService audit = mock(ToolExecutionAuditService.class);
+    private final ToolGatewayImpl gateway = new ToolGatewayImpl(policy, new ObjectMapper().findAndRegisterModules(), audit);
     private final EnterpriseTools tools = new EnterpriseTools(service, new ObjectMapper().findAndRegisterModules(),
             Clock.system(ZoneId.of("Asia/Shanghai")), gateway);
 
     EnterpriseToolsTest() {
+        when(audit.record(any(), anyString(), anyString(), anyString(), anyLong())).thenReturn(true);
         // @PostConstruct 不会在 new 时触发，手动注册工具到网关
         tools.registerTools();
     }
