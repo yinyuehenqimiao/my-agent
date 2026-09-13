@@ -54,6 +54,13 @@ sa-token:
 myagent:
   engine:
     type: agent
+  enterprise:
+    # LOCAL 适合当前开发演示；HTTP_ERP 仅在配置了受控 ERP 地址和服务令牌后启用。
+    adapter: ${ENTERPRISE_ADAPTER:LOCAL}
+    erp:
+      base-url: ${ERP_BASE_URL:}
+      service-token: ${ERP_SERVICE_TOKEN:}
+      timeout-ms: ${ERP_TIMEOUT_MS:3000}
 
 agent:
   chat:
