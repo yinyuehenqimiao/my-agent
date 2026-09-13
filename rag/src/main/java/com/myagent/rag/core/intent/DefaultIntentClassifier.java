@@ -207,7 +207,12 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
                     continue;
                 }
 
-                scores.add(new NodeScore(node, obj.get("score").getAsDouble()));
+                double score = obj.get("score").getAsDouble();
+                if (!Double.isFinite(score) || score < 0D || score > 1D) {
+                    log.warn("LLM 返回了越界的意图置信度, id: {}, score: {}，已跳过", id, score);
+                    continue;
+                }
+                scores.add(new NodeScore(node, score));
             }
 
             // 降序排序
@@ -265,6 +270,8 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
                 }
             } else if (node.isSystem()) {
                 sb.append("  type=SYSTEM\n");
+            } else if (node.getKind() == com.myagent.rag.enums.IntentKind.WORKFLOW) {
+                sb.append("  type=WORKFLOW\n");
             } else {
                 sb.append("  type=KB\n");
             }
