@@ -7,6 +7,8 @@ import com.myagent.enterprise.dto.EnterpriseTypes.LeaveInput;
 import com.myagent.enterprise.service.EnterpriseService;
 import com.myagent.framework.context.ExecutionIdentity;
 import com.myagent.framework.enterprise.EmployeeProfile;
+import com.myagent.framework.enterprise.EmployeeTenure;
+import com.myagent.framework.enterprise.EmployeeBusinessPermissions;
 import com.myagent.framework.enterprise.EnterpriseSystemPort;
 import com.myagent.framework.enterprise.LeaveBalance;
 import com.myagent.framework.enterprise.LeaveRequestCommand;
@@ -16,6 +18,9 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
+import java.time.Clock;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 本地企业系统适配器：包装现有 {@link EnterpriseService}，实现 {@link EnterpriseSystemPort}。
@@ -43,6 +48,22 @@ public class LocalEnterpriseSystemAdapter implements EnterpriseSystemPort {
     public LeaveBalance getLeaveBalance(ExecutionIdentity identity, int year) {
         Account a = service.balance(requireActor(identity), year);
         return new LeaveBalance(a.userId(), a.year(), a.total(), a.frozen(), a.used());
+    }
+
+    @Override
+    public EmployeeTenure getCurrentEmployeeTenure(ExecutionIdentity identity) {
+        service.profile(requireActor(identity));
+        // 旧本地表没有入职日期，明确返回不可用，禁止用账号创建时间猜测司龄。
+        return EmployeeTenure.unavailable(LocalDate.now(Clock.systemDefaultZone()));
+    }
+
+    @Override
+    public EmployeeBusinessPermissions getCurrentEmployeePermissions(ExecutionIdentity identity) {
+        Employee employee = service.profile(requireActor(identity));
+        List<String> permissions = new ArrayList<>(List.of("查看本人档案", "查询本人年假", "查询本人请假申请", "发起请假"));
+        if ("MANAGER".equals(employee.businessRole())) permissions.add("处理直属下属请假审批");
+        if ("HR".equals(employee.businessRole())) permissions.add("处理人事请假审批");
+        return new EmployeeBusinessPermissions(permissions);
     }
 
     @Override

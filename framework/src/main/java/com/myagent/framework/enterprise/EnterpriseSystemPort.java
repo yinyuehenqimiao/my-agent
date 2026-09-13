@@ -18,6 +18,12 @@ public interface EnterpriseSystemPort {
     /** 年度年假余额 */
     LeaveBalance getLeaveBalance(ExecutionIdentity identity, int year);
 
+    /** 当前员工的入职年限；数据源未维护入职日期时返回 {@code available=false}。 */
+    EmployeeTenure getCurrentEmployeeTenure(ExecutionIdentity identity);
+
+    /** 当前员工可理解的业务权限名称，禁止直接返回内部权限码。 */
+    EmployeeBusinessPermissions getCurrentEmployeePermissions(ExecutionIdentity identity);
+
     /**
      * 创建请假申请（写操作，幂等）。
      * 重复携带相同 idempotencyKey 的请求返回原结果，不重复扣减。

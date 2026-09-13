@@ -5,6 +5,7 @@ import com.myagent.enterprise.dto.EnterpriseTypes.*;
 import com.myagent.enterprise.service.EnterpriseService;
 import com.myagent.framework.context.ExecutionIdentity;
 import com.myagent.framework.context.LoginUser;
+import com.myagent.framework.enterprise.EnterpriseSystemPort;
 import com.myagent.framework.exception.ClientException;
 import com.myagent.framework.tool.ToolDefinition;
 import com.myagent.framework.tool.ToolDefinition.RiskLevel;
@@ -19,7 +20,6 @@ import io.agentscope.core.message.ToolResultState;
 import io.agentscope.core.tool.AgentTool;
 import io.agentscope.core.tool.ToolCallParam;
 import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -42,12 +42,13 @@ import java.util.UUID;
  */
 @Component
 @Slf4j
-@RequiredArgsConstructor
 @ConditionalOnProperty(name = "myagent.enterprise.enabled", havingValue = "true")
 public class EnterpriseTools {
     private static final Map<String, String> DISPLAY_NAMES = Map.of(
             "get_my_profile", "我的员工档案",
             "get_leave_balance", "我的年假余额",
+            "get_my_tenure", "我的入职年限",
+            "get_my_business_permissions", "我的业务权限",
             "list_my_leave_requests", "我的请假申请",
             "get_leave_request_detail", "请假申请详情",
             "list_my_approval_tasks", "我的审批待办",
@@ -55,9 +56,22 @@ public class EnterpriseTools {
             "prepare_approval_decision", "生成审批确认卡",
             "prepare_leave_withdrawal", "生成撤回确认卡");
     private final EnterpriseService service;
+    private final EnterpriseSystemPort enterpriseSystem;
     private final ObjectMapper json;
     private final Clock enterpriseClock;
     private final ToolGateway toolGateway;
+    private final String adapterMode;
+
+    public EnterpriseTools(EnterpriseService service, EnterpriseSystemPort enterpriseSystem, ObjectMapper json,
+                           Clock enterpriseClock, ToolGateway toolGateway,
+                           @org.springframework.beans.factory.annotation.Value("${myagent.enterprise.adapter:LOCAL}") String adapterMode) {
+        this.service = service;
+        this.enterpriseSystem = enterpriseSystem;
+        this.json = json;
+        this.enterpriseClock = enterpriseClock;
+        this.toolGateway = toolGateway;
+        this.adapterMode = adapterMode == null ? "LOCAL" : adapterMode;
+    }
 
     @PostConstruct
     void registerTools() {
@@ -67,6 +81,11 @@ public class EnterpriseTools {
         toolGateway.register(def("get_leave_balance", "查询本人年度年假余额",
                 Map.of("year", prop("integer", "年份，不填使用本年")), List.of(),
                 true, RiskLevel.LOW, null), this::getLeaveBalance);
+        toolGateway.register(def("get_my_tenure", "查询本人入职日期和已满年限；数据源未维护时明确提示不可用",
+                Map.of(), List.of(), true, RiskLevel.LOW, null), this::getMyTenure);
+        toolGateway.register(def("get_my_business_permissions", "查询本人可理解的业务权限名称，不返回内部权限码",
+                Map.of(), List.of(), true, RiskLevel.LOW, null), this::getMyBusinessPermissions);
+        if (!isLocalAdapter()) return;
         toolGateway.register(def("list_my_leave_requests", "查询本人的请假申请和当前状态", Map.of(), List.of(),
                 true, RiskLevel.LOW, null), this::listMyLeaveRequests);
         toolGateway.register(def("get_leave_request_detail", "查询有权限访问的申请详情与审批时间线",
@@ -96,14 +115,22 @@ public class EnterpriseTools {
     // ===== 工具处理器：使用服务端签发身份，忽略模型传入的 userId =====
 
     private ToolResult getMyProfile(ToolInvocation inv) {
-        return ToolResult.success(service.profile(actor(inv)), inv.getTraceId());
+        return ToolResult.success(enterpriseSystem.getCurrentEmployee(inv.getIdentity()), inv.getTraceId());
     }
 
     private ToolResult getLeaveBalance(ToolInvocation inv) {
         int year = inv.getInput() != null && inv.getInput().containsKey("year")
                 ? Integer.parseInt(inv.getInput().get("year").toString())
                 : LocalDate.now(enterpriseClock).getYear();
-        return ToolResult.success(service.balance(actor(inv), year), inv.getTraceId());
+        return ToolResult.success(enterpriseSystem.getLeaveBalance(inv.getIdentity(), year), inv.getTraceId());
+    }
+
+    private ToolResult getMyTenure(ToolInvocation inv) {
+        return ToolResult.success(enterpriseSystem.getCurrentEmployeeTenure(inv.getIdentity()), inv.getTraceId());
+    }
+
+    private ToolResult getMyBusinessPermissions(ToolInvocation inv) {
+        return ToolResult.success(enterpriseSystem.getCurrentEmployeePermissions(inv.getIdentity()), inv.getTraceId());
     }
 
     private ToolResult listMyLeaveRequests(ToolInvocation inv) {
@@ -157,10 +184,15 @@ public class EnterpriseTools {
     }
 
     private List<String> registeredNames() {
-        return List.of("get_my_profile", "get_leave_balance", "list_my_leave_requests",
-                "get_leave_request_detail", "list_my_approval_tasks",
-                "prepare_leave_request", "prepare_approval_decision", "prepare_leave_withdrawal");
+        List<String> selfService = List.of("get_my_profile", "get_leave_balance", "get_my_tenure", "get_my_business_permissions");
+        if (!isLocalAdapter()) return selfService;
+        return java.util.stream.Stream.concat(selfService.stream(), java.util.stream.Stream.of(
+                        "list_my_leave_requests", "get_leave_request_detail", "list_my_approval_tasks",
+                        "prepare_leave_request", "prepare_approval_decision", "prepare_leave_withdrawal"))
+                .toList();
     }
+
+    private boolean isLocalAdapter() { return "LOCAL".equalsIgnoreCase(adapterMode); }
 
     private AgentTool agentTool(String name, Source source) {
         ToolDefinition definition = toolGateway.listDefinitions().stream()

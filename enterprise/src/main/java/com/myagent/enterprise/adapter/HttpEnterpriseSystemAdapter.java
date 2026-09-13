@@ -2,6 +2,8 @@ package com.myagent.enterprise.adapter;
 
 import com.myagent.framework.context.ExecutionIdentity;
 import com.myagent.framework.enterprise.EmployeeProfile;
+import com.myagent.framework.enterprise.EmployeeTenure;
+import com.myagent.framework.enterprise.EmployeeBusinessPermissions;
 import com.myagent.framework.enterprise.EnterpriseSystemPort;
 import com.myagent.framework.enterprise.LeaveBalance;
 import com.myagent.framework.enterprise.LeaveRequestCommand;
@@ -54,6 +56,28 @@ public class HttpEnterpriseSystemAdapter implements EnterpriseSystemPort {
     public LeaveBalance getLeaveBalance(ExecutionIdentity identity, int year) {
         JsonNode data = get(identity, "/api/erp/v1/leave-balances/me?year=" + year);
         return new LeaveBalance(identity.getUserId(), data.path("year").asInt(year), data.path("totalDays").asInt(), data.path("frozenDays").asInt(), data.path("usedDays").asInt());
+    }
+
+    @Override
+    public EmployeeTenure getCurrentEmployeeTenure(ExecutionIdentity identity) {
+        JsonNode data = get(identity, "/api/erp/v1/employees/me/tenure");
+        try {
+            return new EmployeeTenure(java.time.LocalDate.parse(text(data, "hireDate")),
+                    java.time.LocalDate.parse(text(data, "asOfDate")), data.path("completedYears").asInt(), true);
+        } catch (Exception exception) {
+            throw new ClientException("ERP 返回的入职年限数据无效");
+        }
+    }
+
+    @Override
+    public EmployeeBusinessPermissions getCurrentEmployeePermissions(ExecutionIdentity identity) {
+        JsonNode data = get(identity, "/api/erp/v1/employees/me/permissions");
+        if (!data.isArray()) throw new ClientException("ERP 返回的权限数据无效");
+        java.util.List<String> permissions = new java.util.ArrayList<>();
+        data.forEach(item -> {
+            if (item.isTextual() && !item.asText().isBlank()) permissions.add(item.asText());
+        });
+        return new EmployeeBusinessPermissions(permissions);
     }
 
     @Override

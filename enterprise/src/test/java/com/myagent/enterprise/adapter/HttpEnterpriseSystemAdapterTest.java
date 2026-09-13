@@ -32,6 +32,14 @@ class HttpEnterpriseSystemAdapterTest {
             byte[] body = "{\"code\":\"0\",\"data\":{\"year\":2026,\"totalDays\":10,\"frozenDays\":2,\"usedDays\":1,\"availableDays\":7}}".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
         });
+        server.createContext("/api/erp/v1/employees/me/tenure", exchange -> {
+            byte[] body = "{\"code\":\"0\",\"data\":{\"hireDate\":\"2020-09-13\",\"asOfDate\":\"2026-09-13\",\"completedYears\":6}}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
+        });
+        server.createContext("/api/erp/v1/employees/me/permissions", exchange -> {
+            byte[] body = "{\"code\":\"0\",\"data\":[\"查询本人年假\",\"发起请假\"]}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
+        });
         server.createContext("/api/erp/v1/leave-requests", exchange -> {
             assertThat(exchange.getRequestHeaders().getFirst("X-Trace-Id")).isEqualTo("trace-write-1");
             assertThat(exchange.getRequestHeaders().getFirst("Idempotency-Key")).isEqualTo("idempotent-1");
@@ -48,6 +56,14 @@ class HttpEnterpriseSystemAdapterTest {
         var identity = LoginUser.builder().userId("u1").tenantId("tenant-a").build();
         assertThat(adapter.getCurrentEmployee(identity).displayName()).isEqualTo("张三");
         assertThat(adapter.getLeaveBalance(identity, 2026).getAvailable()).isEqualTo(7);
+    }
+
+    @Test void mapsTenureAndBusinessPermissionsFromAuthenticatedEmployee() {
+        var identity = LoginUser.builder().userId("u1").tenantId("tenant-a").build();
+
+        assertThat(adapter.getCurrentEmployeeTenure(identity).completedYears()).isEqualTo(6);
+        assertThat(adapter.getCurrentEmployeePermissions(identity).permissions())
+                .containsExactly("查询本人年假", "发起请假");
     }
 
     @Test void unavailableErpFailsClosed() {

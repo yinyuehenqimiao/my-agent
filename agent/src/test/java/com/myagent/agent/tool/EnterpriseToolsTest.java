@@ -6,6 +6,10 @@ import com.myagent.agent.tool.gateway.ToolExecutionAuditService;
 import com.myagent.enterprise.dto.EnterpriseTypes.*;
 import com.myagent.enterprise.service.EnterpriseService;
 import com.myagent.framework.exception.ClientException;
+import com.myagent.framework.enterprise.EmployeeBusinessPermissions;
+import com.myagent.framework.enterprise.EmployeeProfile;
+import com.myagent.framework.enterprise.EmployeeTenure;
+import com.myagent.framework.enterprise.EnterpriseSystemPort;
 import com.myagent.system.auth.service.PolicyDecisionService;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.TextBlock;
@@ -21,11 +25,12 @@ import static org.mockito.Mockito.*;
 
 class EnterpriseToolsTest {
     private final EnterpriseService service = mock(EnterpriseService.class);
+    private final EnterpriseSystemPort enterpriseSystem = mock(EnterpriseSystemPort.class);
     private final PolicyDecisionService policy = mock(PolicyDecisionService.class);
     private final ToolExecutionAuditService audit = mock(ToolExecutionAuditService.class);
     private final ToolGatewayImpl gateway = new ToolGatewayImpl(policy, new ObjectMapper().findAndRegisterModules(), audit);
-    private final EnterpriseTools tools = new EnterpriseTools(service, new ObjectMapper().findAndRegisterModules(),
-            Clock.system(ZoneId.of("Asia/Shanghai")), gateway);
+    private final EnterpriseTools tools = new EnterpriseTools(service, enterpriseSystem, new ObjectMapper().findAndRegisterModules(),
+            Clock.system(ZoneId.of("Asia/Shanghai")), gateway, "LOCAL");
 
     EnterpriseToolsTest() {
         when(audit.record(any(), anyString(), anyString(), anyString(), anyLong())).thenReturn(true);
@@ -51,12 +56,12 @@ class EnterpriseToolsTest {
 
     @Test
     void inputCannotImpersonateAnotherEmployee() {
-        when(service.profile("employee")).thenReturn(new Employee("employee", "员工", "研发", "EMPLOYEE", "m", "h", true));
+        when(enterpriseSystem.getCurrentEmployee(any())).thenReturn(new EmployeeProfile("employee", "员工", "研发", "EMPLOYEE", "m", "h", true));
         var r = tool("get_my_profile").callAsync(param(Map.of("userId", "admin"))).block();
         // 模型传入的 userId 被忽略，使用服务端签发身份 employee
         assertEquals(ToolResultState.SUCCESS, r.getState());
-        verify(service).profile("employee");
-        verify(service, never()).profile("admin");
+        verify(enterpriseSystem).getCurrentEmployee(argThat(identity -> "employee".equals(identity.getUserId())));
+        verifyNoInteractions(service);
     }
 
     @Test
@@ -76,7 +81,7 @@ class EnterpriseToolsTest {
 
     @Test
     void serviceFailureCannotBeReportedAsSuccess() {
-        when(service.balance(anyString(), anyInt())).thenThrow(new ClientException("余额账户不可用"));
+        when(enterpriseSystem.getLeaveBalance(any(), anyInt())).thenThrow(new ClientException("余额账户不可用"));
         var r = tool("get_leave_balance").callAsync(param(Map.of())).block();
         assertEquals(ToolResultState.ERROR, r.getState());
         assertTrue(((TextBlock) r.getOutput().get(0)).getText().contains("VALIDATION_OR_PERMISSION"));
@@ -84,7 +89,7 @@ class EnterpriseToolsTest {
 
     @Test
     void internalErrorsDoNotExposeSensitiveExceptionText() {
-        when(service.profile(anyString())).thenThrow(new IllegalStateException("password=secret"));
+        when(enterpriseSystem.getCurrentEmployee(any())).thenThrow(new IllegalStateException("password=secret"));
         var r = tool("get_my_profile").callAsync(param(Map.of())).block();
         assertEquals(ToolResultState.ERROR, r.getState());
         assertFalse(((TextBlock) r.getOutput().get(0)).getText().contains("secret"));
@@ -98,5 +103,33 @@ class EnterpriseToolsTest {
         assertEquals(false, tool.getParameters().get("additionalProperties"));
         assertEquals(java.util.List.of("leaveType", "startDate", "endDate", "reason"),
                 tool.getParameters().get("required"));
+    }
+
+    @Test
+    void selfServiceToolsUseAuthenticatedIdentityAndExposeOnlyBusinessFriendlyData() {
+        when(enterpriseSystem.getCurrentEmployeeTenure(any()))
+                .thenReturn(new EmployeeTenure(LocalDate.of(2020, 9, 13), LocalDate.of(2026, 9, 13), 6, true));
+        when(enterpriseSystem.getCurrentEmployeePermissions(any()))
+                .thenReturn(new EmployeeBusinessPermissions(java.util.List.of("查询本人年假", "发起请假")));
+
+        var tenure = tool("get_my_tenure").callAsync(param(Map.of("userId", "another-user"))).block();
+        var permissions = tool("get_my_business_permissions").callAsync(param(Map.of())).block();
+
+        assertEquals(ToolResultState.SUCCESS, tenure.getState());
+        assertTrue(((TextBlock) tenure.getOutput().get(0)).getText().contains("completedYears"));
+        assertTrue(((TextBlock) permissions.getOutput().get(0)).getText().contains("查询本人年假"));
+        verify(enterpriseSystem).getCurrentEmployeeTenure(argThat(identity -> "employee".equals(identity.getUserId())));
+        verify(enterpriseSystem).getCurrentEmployeePermissions(argThat(identity -> "employee".equals(identity.getUserId())));
+    }
+
+    @Test
+    void httpErpModeDoesNotExposeLegacyLocalLeaveOperations() {
+        ToolGatewayImpl httpGateway = new ToolGatewayImpl(policy, new ObjectMapper().findAndRegisterModules(), audit);
+        EnterpriseTools httpTools = new EnterpriseTools(service, enterpriseSystem, new ObjectMapper().findAndRegisterModules(),
+                Clock.system(ZoneId.of("Asia/Shanghai")), httpGateway, "HTTP_ERP");
+        httpTools.registerTools();
+
+        assertEquals(java.util.Set.of("get_my_profile", "get_leave_balance", "get_my_tenure", "get_my_business_permissions"),
+                httpTools.tools().stream().map(AgentTool::getName).collect(java.util.stream.Collectors.toSet()));
     }
 }
