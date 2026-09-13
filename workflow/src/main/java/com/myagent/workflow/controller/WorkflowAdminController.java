@@ -6,6 +6,7 @@ import com.myagent.framework.exception.ClientException;
 import com.myagent.framework.web.Results;
 import com.myagent.system.auth.service.PolicyDecisionService;
 import com.myagent.workflow.dao.entity.WfVersionDO;
+import com.myagent.workflow.service.AuditQueryService;
 import com.myagent.workflow.service.WorkflowVersionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -32,6 +33,7 @@ public class WorkflowAdminController {
     private final WorkflowVersionService versionService;
     private final PolicyDecisionService policy;
     private final JdbcTemplate jdbc;
+    private final AuditQueryService auditQueryService;
 
     // ===== 定义/版本 =====
 
@@ -141,18 +143,14 @@ public class WorkflowAdminController {
 
     // ===== 审计 =====
 
-    /**
-     * 平台操作审计（operation_audit）：工作流生命周期与后续 Tool Gateway 等平台级操作。
-     * 不含请假业务流水（ent_audit）与权限拒绝流水（sys_auth_audit）。
-     */
+    /** 统一审计查询；权限校验后只返回当前登录租户的数据。 */
     @GetMapping("/audit")
-    public Result<List<Map<String, Object>>> audit(@RequestParam(defaultValue = "100") int limit) {
-        policy.requirePermission(UserContext.requireIdentity(), "audit:view");
-        int safeLimit = Math.min(Math.max(limit, 1), 500);
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT id,operation,operator_id,target_type,target_id,trace_id,detail,created_time FROM operation_audit ORDER BY created_time DESC LIMIT ?",
-                safeLimit);
-        return Results.success(rows.stream().map(this::toAudit).toList());
+    public Result<List<AuditQueryService.AuditEntry>> audit(
+            @RequestParam(defaultValue = "100") int limit,
+            @RequestParam(defaultValue = "ALL") AuditQueryService.Category category) {
+        var identity = UserContext.requireIdentity();
+        policy.requirePermission(identity, "audit:view");
+        return Results.success(auditQueryService.list(identity, category, limit));
     }
 
     private String currentActor() {
@@ -194,19 +192,6 @@ public class WorkflowAdminController {
         m.put("publishedTime", row.get("published_time"));
         m.put("publishedBy", row.get("published_by"));
         m.put("bpmnXml", row.get("bpmn_xml"));
-        return m;
-    }
-
-    private Map<String, Object> toAudit(Map<String, Object> row) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", row.get("id"));
-        m.put("operation", row.get("operation"));
-        m.put("operatorId", row.get("operator_id"));
-        m.put("targetType", row.get("target_type"));
-        m.put("targetId", row.get("target_id"));
-        m.put("traceId", row.get("trace_id"));
-        m.put("detail", row.get("detail"));
-        m.put("createdTime", row.get("created_time"));
         return m;
     }
 

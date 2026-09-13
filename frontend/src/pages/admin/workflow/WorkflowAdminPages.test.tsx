@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   getRouteOptions: vi.fn(),
   saveRoute: vi.fn(),
   deleteRoute: vi.fn(),
+  listAudit: vi.fn(),
 }));
 
 vi.mock("@/services/agentAdminService", () => ({
@@ -32,7 +33,15 @@ vi.mock("@/services/agentAdminService", () => ({
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
-import { RouteSimulationPage, ToolCenterPage } from "./WorkflowAdminPages";
+vi.mock("@/services/workflowService", () => ({
+  workflowService: { listAudit: mocks.listAudit },
+  AUDIT_CATEGORY_LABEL: {
+    ALL: "全部类型", PLATFORM: "平台操作", AUTHORIZATION: "权限判定", TOOL: "工具调用", BUSINESS: "业务流程",
+  },
+  AUDIT_EVENT_LABEL: { TOOL_EXECUTION: "工具执行", AUTH_DENY: "权限拒绝" },
+}));
+
+import { AuditPage, RouteSimulationPage, ToolCenterPage } from "./WorkflowAdminPages";
 
 describe("工作流管理辅助页面", () => {
   beforeEach(() => {
@@ -43,6 +52,7 @@ describe("工作流管理辅助页面", () => {
       workflows: [{ value: "leave-approval", label: "请假审批" }],
       reactConfigs: [{ value: "default", label: "标准开放问答" }],
     });
+    mocks.listAudit.mockResolvedValue([]);
   });
   afterEach(cleanup);
 
@@ -110,5 +120,20 @@ describe("工作流管理辅助页面", () => {
       targetType: "WORKFLOW",
       target: "leave-approval",
     }));
+  });
+
+  it("统一审计展示中文事件并按分类重新查询", async () => {
+    mocks.listAudit.mockResolvedValue([{
+      id: "9", category: "TOOL", eventCode: "TOOL_EXECUTION", actorId: "employee",
+      targetType: "tool", targetId: "get_leave_balance", traceId: "trace-9",
+      detail: "phase=COMPLETED", createdTime: "2026-09-13T11:00:00",
+    }]);
+    render(<AuditPage />);
+
+    expect(await screen.findByText("工具执行")).toBeTruthy();
+    expect(screen.getAllByText("工具调用").length).toBeGreaterThan(0);
+    expect(screen.getByText("trace-9")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("审计分类"), { target: { value: "AUTHORIZATION" } });
+    await waitFor(() => expect(mocks.listAudit).toHaveBeenLastCalledWith(100, "AUTHORIZATION"));
   });
 });

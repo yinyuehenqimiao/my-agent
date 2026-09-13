@@ -5,6 +5,7 @@ import com.myagent.framework.context.UserContext;
 import com.myagent.framework.exception.ClientException;
 import com.myagent.system.auth.service.PolicyDecisionService;
 import com.myagent.workflow.service.WorkflowVersionService;
+import com.myagent.workflow.service.AuditQueryService;
 import org.junit.jupiter.api.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -24,6 +25,7 @@ class WorkflowAdminControllerTest {
     private WorkflowVersionService versionService;
     private PolicyDecisionService policy;
     private JdbcTemplate jdbc;
+    private AuditQueryService auditQueryService;
     private WorkflowAdminController controller;
 
     @BeforeEach
@@ -31,7 +33,8 @@ class WorkflowAdminControllerTest {
         versionService = mock(WorkflowVersionService.class);
         policy = mock(PolicyDecisionService.class);
         jdbc = mock(JdbcTemplate.class);
-        controller = new WorkflowAdminController(versionService, policy, jdbc);
+        auditQueryService = mock(AuditQueryService.class);
+        controller = new WorkflowAdminController(versionService, policy, jdbc, auditQueryService);
         UserContext.set(LoginUser.builder().userId("u1").username("u1").build());
     }
 
@@ -80,7 +83,16 @@ class WorkflowAdminControllerTest {
     @Test
     void auditRequiresAuditViewPermission() {
         doThrow(new ClientException("无权限")).when(policy).requirePermission(any(), eq("audit:view"));
-        assertThatThrownBy(() -> controller.audit(100)).isInstanceOf(ClientException.class);
+        assertThatThrownBy(() -> controller.audit(100, AuditQueryService.Category.ALL)).isInstanceOf(ClientException.class);
+        verifyNoInteractions(auditQueryService);
+    }
+
+    @Test
+    void auditDelegatesWithCurrentTenantAndCategory() {
+        controller.audit(25, AuditQueryService.Category.TOOL);
+
+        verify(auditQueryService).list(argThat(identity -> "default".equals(identity.getTenantId())),
+                eq(AuditQueryService.Category.TOOL), eq(25));
     }
 
     @Test

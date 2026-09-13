@@ -9,7 +9,13 @@ import { Input } from "@/components/ui/input";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
-import { type AuditEntry, workflowService } from "@/services/workflowService";
+import {
+  AUDIT_CATEGORY_LABEL,
+  AUDIT_EVENT_LABEL,
+  type AuditCategory,
+  type AuditEntry,
+  workflowService
+} from "@/services/workflowService";
 import { toast } from "sonner";
 import { getErrorMessage } from "@/utils/error";
 import {
@@ -95,21 +101,36 @@ export function ToolCenterPage() {
   );
 }
 
-/** 审计查询页：平台 operation_audit（工作流生命周期等），不含请假/权限拒绝流水。 */
+/** 统一审计查询页：按当前登录租户聚合平台、权限、工具与业务流水。 */
 export function AuditPage() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
+  const [category, setCategory] = useState<AuditCategory>("ALL");
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    workflowService.listAudit(100)
+    setLoading(true);
+    workflowService.listAudit(100, category)
       .then((list) => setEntries(Array.isArray(list) ? list : []))
-      .catch((e) => toast.error(getErrorMessage(e, "加载审计失败")));
-  }, []);
+      .catch((e) => toast.error(getErrorMessage(e, "加载审计失败")))
+      .finally(() => setLoading(false));
+  }, [category]);
   return (
     <div className="space-y-4 p-4">
-      <div>
-        <h2 className="flex items-center gap-2 text-lg font-semibold"><Shield className="h-4 w-4" /> 平台操作审计</h2>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold"><Shield className="h-4 w-4" /> 统一安全审计</h2>
         <p className="mt-1 text-sm text-slate-500">
-          当前查看的是工作流平台操作（创建/审核/发布等）。请假业务流水在企业审批侧，权限拒绝流水在认证审计表，尚未合并到本页。
+            仅展示当前登录租户的数据，统一查看平台变更、权限判定、工具调用和企业业务事件。
         </p>
+        </div>
+        <label className="grid gap-1 text-sm text-slate-600">
+          审计分类
+          <select aria-label="审计分类" className="h-10 min-w-40 rounded-md border border-input bg-background px-3"
+            value={category} onChange={(event) => setCategory(event.target.value as AuditCategory)}>
+            {(Object.keys(AUDIT_CATEGORY_LABEL) as AuditCategory[]).map((value) => (
+              <option key={value} value={value}>{AUDIT_CATEGORY_LABEL[value]}</option>
+            ))}
+          </select>
+        </label>
       </div>
       <Card>
         <CardContent className="p-0">
@@ -117,26 +138,31 @@ export function AuditPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>操作</TableHead>
+                <TableHead>分类</TableHead>
                 <TableHead>操作人</TableHead>
                 <TableHead>目标</TableHead>
                 <TableHead>详情</TableHead>
+                <TableHead>链路标识</TableHead>
                 <TableHead>时间</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {entries.length === 0 && (
+              {!loading && entries.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-10 text-center text-slate-400">
-                    暂无平台审计记录；对工作流执行创建/提交/发布后会出现在这里
+                  <TableCell colSpan={7} className="py-10 text-center text-slate-400">
+                    当前分类下暂无审计记录
                   </TableCell>
                 </TableRow>
               )}
+              {loading && <TableRow><TableCell colSpan={7} className="py-10 text-center text-slate-400">正在加载审计记录…</TableCell></TableRow>}
               {entries.map((e) => (
-                <TableRow key={e.id}>
-                  <TableCell className="font-mono text-xs">{e.operation}</TableCell>
-                  <TableCell>{e.operatorId ?? "-"}</TableCell>
+                <TableRow key={`${e.category}-${e.id}`}>
+                  <TableCell><div>{AUDIT_EVENT_LABEL[e.eventCode] ?? e.eventCode}</div><div className="font-mono text-xs text-slate-400">{e.eventCode}</div></TableCell>
+                  <TableCell><Badge variant="outline">{AUDIT_CATEGORY_LABEL[e.category]}</Badge></TableCell>
+                  <TableCell>{e.actorId ?? "-"}</TableCell>
                   <TableCell className="text-slate-500">{[e.targetType, e.targetId].filter(Boolean).join("/") || "-"}</TableCell>
-                  <TableCell className="max-w-xs truncate text-xs text-slate-500">{e.detail ?? e.traceId ?? "-"}</TableCell>
+                  <TableCell className="max-w-xs truncate text-xs text-slate-500">{e.detail ?? "-"}</TableCell>
+                  <TableCell className="font-mono text-xs text-slate-400">{e.traceId ?? "-"}</TableCell>
                   <TableCell className="text-slate-500">{e.createdTime}</TableCell>
                 </TableRow>
               ))}

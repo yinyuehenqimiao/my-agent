@@ -54,15 +54,43 @@ export interface ReviewPayload {
 }
 
 export interface AuditEntry {
-  id: number;
-  operation: string;
-  operatorId?: string | null;
+  id: string;
+  category: AuditCategory;
+  eventCode: string;
+  actorId?: string | null;
   targetType?: string | null;
   targetId?: string | null;
   traceId?: string | null;
   detail?: string | null;
   createdTime: string;
 }
+
+export type AuditCategory = "ALL" | "PLATFORM" | "AUTHORIZATION" | "TOOL" | "BUSINESS";
+
+export const AUDIT_CATEGORY_LABEL: Record<AuditCategory, string> = {
+  ALL: "全部类型",
+  PLATFORM: "平台操作",
+  AUTHORIZATION: "权限判定",
+  TOOL: "工具调用",
+  BUSINESS: "业务流程"
+};
+
+export const AUDIT_EVENT_LABEL: Record<string, string> = {
+  WF_CREATE: "创建工作流",
+  WF_SUBMIT_REVIEW: "提交审核",
+  WF_APPROVE: "审核通过",
+  WF_REJECT: "审核驳回",
+  WF_PUBLISH: "发布工作流",
+  WF_RETIRE: "停用工作流",
+  WF_ROLLBACK: "回滚工作流",
+  TOOL_EXECUTION: "工具执行",
+  AUTH_ALLOW: "权限允许",
+  AUTH_DENY: "权限拒绝",
+  CREATED: "业务单据已创建",
+  APPROVED: "业务审批通过",
+  REJECTED: "业务审批驳回",
+  CANCELLED: "业务单据已取消"
+};
 
 export const WF_STATUS_LABEL: Record<WfVersionStatus, string> = {
   DRAFT: "草稿",
@@ -101,6 +129,6 @@ export const workflowService = {
   rollback: (defId: number, versionId: number) =>
     api.post<void>(`/api/workflow/definitions/${defId}/rollback/${versionId}`),
 
-  listAudit: (limit = 100) =>
-    api.get<AuditEntry[]>(`/api/workflow/audit?limit=${limit}`)
+  listAudit: (limit = 100, category: AuditCategory = "ALL") =>
+    api.get<AuditEntry[]>(`/api/workflow/audit?limit=${limit}&category=${encodeURIComponent(category)}`)
 };
