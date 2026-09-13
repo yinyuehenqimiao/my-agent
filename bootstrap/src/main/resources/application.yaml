@@ -199,6 +199,9 @@ rag:
       lease-seconds: 30
 
 logging:
+  charset:
+    console: UTF-8
+    file: UTF-8
   level:
     root: INFO
     com.myagent: DEBUG
