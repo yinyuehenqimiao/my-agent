@@ -37,6 +37,34 @@ export interface RouteSimulationResult {
   reason: string;
 }
 
+export type RouteTargetType = "WORKFLOW" | "REACT";
+
+export interface RouteBinding {
+  routeKey: string;
+  intentCode: string;
+  intentName?: string | null;
+  targetType: RouteTargetType;
+  target: string;
+  updateTime?: string | null;
+}
+
+export interface RouteOption {
+  value: string;
+  label: string;
+}
+
+export interface RouteOptions {
+  intents: RouteOption[];
+  workflows: RouteOption[];
+  reactConfigs: RouteOption[];
+}
+
+export interface SaveRouteRequest {
+  intentCode: string;
+  targetType: RouteTargetType;
+  target: string;
+}
+
 export const TOOL_RISK_LABEL: Record<ToolRiskLevel, string> = {
   LOW: "低风险",
   MEDIUM: "中风险",
@@ -53,6 +81,12 @@ export const ROUTE_DECISION_LABEL: Record<RouteDecision, string> = {
 
 export const agentAdminService = {
   listTools: () => api.get<ToolCatalogItem[]>("/api/agent/admin/tools"),
+  listRoutes: () => api.get<RouteBinding[]>("/api/agent/admin/routes"),
+  getRouteOptions: () => api.get<RouteOptions>("/api/agent/admin/routes/options"),
+  saveRoute: (routeKey: string, payload: SaveRouteRequest) =>
+    api.put<RouteBinding>(`/api/agent/admin/routes/${encodeURIComponent(routeKey)}`, payload),
+  deleteRoute: (routeKey: string) =>
+    api.delete<void>(`/api/agent/admin/routes/${encodeURIComponent(routeKey)}`),
   simulateRoute: (payload: RouteSimulationRequest) =>
     api.post<RouteSimulationResult>("/api/agent/admin/routes/simulate", payload),
 };

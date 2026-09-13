@@ -1,6 +1,8 @@
 package com.myagent.agent.controller;
 
-import com.myagent.agent.routing.RoutingService;
+import com.myagent.agent.routing.ChatRoutePlan;
+import com.myagent.agent.routing.ChatRoutePlanner;
+import com.myagent.agent.routing.RouteBindingService;
 import com.myagent.framework.context.LoginUser;
 import com.myagent.framework.context.UserContext;
 import com.myagent.framework.exception.ClientException;
@@ -8,9 +10,6 @@ import com.myagent.framework.routing.RouteDecision;
 import com.myagent.framework.routing.RouteResult;
 import com.myagent.framework.tool.ToolDefinition;
 import com.myagent.framework.tool.ToolGateway;
-import com.myagent.rag.core.intent.IntentClassifier;
-import com.myagent.rag.core.intent.IntentNode;
-import com.myagent.rag.core.intent.NodeScore;
 import com.myagent.rag.enums.IntentKind;
 import com.myagent.system.auth.service.PolicyDecisionService;
 import org.junit.jupiter.api.AfterEach;
@@ -27,18 +26,18 @@ import static org.mockito.Mockito.*;
 class AgentAdminControllerTest {
 
     private ToolGateway gateway;
-    private IntentClassifier classifier;
-    private RoutingService routingService;
+    private ChatRoutePlanner routePlanner;
+    private RouteBindingService routeBindingService;
     private PolicyDecisionService policy;
     private AgentAdminController controller;
 
     @BeforeEach
     void setUp() {
         gateway = mock(ToolGateway.class);
-        classifier = mock(IntentClassifier.class);
-        routingService = mock(RoutingService.class);
+        routePlanner = mock(ChatRoutePlanner.class);
+        routeBindingService = mock(RouteBindingService.class);
         policy = mock(PolicyDecisionService.class);
-        controller = new AgentAdminController(gateway, classifier, routingService, policy);
+        controller = new AgentAdminController(gateway, routePlanner, routeBindingService, policy);
         UserContext.set(LoginUser.builder().userId("u1").username("测试管理员").tenantId("default").build());
     }
 
@@ -57,14 +56,9 @@ class AgentAdminControllerTest {
 
     @Test
     void routeSimulationUsesRealClassifierAndCurrentIdentity() {
-        IntentNode node = IntentNode.builder()
-                .id("leave-approval")
-                .name("请假审批")
-                .kind(IntentKind.WORKFLOW)
-                .build();
-        when(classifier.classifyTargets("我想请年假")).thenReturn(List.of(NodeScore.builder().node(node).score(0.93).build()));
-        when(routingService.route(eq("leave-approval"), eq(IntentKind.WORKFLOW), eq(0.93), eq(false), any()))
-                .thenReturn(RouteResult.of(RouteDecision.WORKFLOW, "leave-approval", "高置信固定流程", 0.93));
+        when(routePlanner.plan(eq("我想请年假"), eq(false), any())).thenReturn(new ChatRoutePlan(
+                "leave-approval", "请假审批", IntentKind.WORKFLOW,
+                RouteResult.of(RouteDecision.WORKFLOW, "leave-approval", "高置信固定流程", 0.93)));
 
         var result = controller.simulate(new AgentAdminController.RouteSimulationRequest("我想请年假", false));
         var data = result.getData();
@@ -73,19 +67,35 @@ class AgentAdminControllerTest {
         assertThat(data.decision()).isEqualTo(RouteDecision.WORKFLOW);
         assertThat(data.target()).isEqualTo("leave-approval");
         verify(policy).requirePermission(any(), eq("route:simulate"));
-        verify(routingService).route(eq("leave-approval"), eq(IntentKind.WORKFLOW), eq(0.93), eq(false),
+        verify(routePlanner).plan(eq("我想请年假"), eq(false),
                 argThat(identity -> "u1".equals(identity.getUserId())));
     }
 
     @Test
     void routeSimulationWithoutCandidatesReturnsClarificationInsteadOfInventingRoute() {
-        when(classifier.classifyTargets("无法识别的问题")).thenReturn(List.of());
+        when(routePlanner.plan(eq("无法识别的问题"), eq(false), any())).thenReturn(new ChatRoutePlan(
+                null, null, null, RouteResult.of(RouteDecision.CLARIFY, null, "未识别到明确意图", 0D)));
 
         var data = controller.simulate(
                 new AgentAdminController.RouteSimulationRequest("无法识别的问题", false)).getData();
 
         assertThat(data.decision()).isEqualTo(RouteDecision.CLARIFY);
         assertThat(data.reason()).contains("未识别");
-        verifyNoInteractions(routingService);
+    }
+
+    @Test
+    void routeReadsAndWritesUseSeparatePermissions() {
+        controller.listRoutes();
+        controller.routeOptions();
+        controller.saveRoute("leave-route", new RouteBindingService.SaveRequest(
+                "leave-approval", RouteBindingService.TargetType.WORKFLOW, "leave-approval"));
+        controller.deleteRoute("leave-route");
+
+        verify(policy, times(2)).requirePermission(any(), eq("route:view"));
+        verify(policy, times(2)).requirePermission(any(), eq("route:edit"));
+        verify(routeBindingService).save(eq("leave-route"), any(),
+                argThat(identity -> "default".equals(identity.getTenantId())));
+        verify(routeBindingService).delete(eq("leave-route"),
+                argThat(identity -> "default".equals(identity.getTenantId())));
     }
 }

@@ -65,7 +65,7 @@ public class RoutingService {
             return RouteResult.of(RouteDecision.WORKFLOW, pendingWorkflowDefKey, "存在待确认/审批动作", confidence);
         }
         // 2. 查 wf_route 绑定
-        Map<String, Object> binding = lookupRoute(intentCode);
+        Map<String, Object> binding = lookupRoute(intentCode, identity);
         if (binding != null) {
             String workflowDefKey = (String) binding.get("workflow_def_key");
             String reactConfig = (String) binding.get("react_config");
@@ -120,12 +120,14 @@ public class RoutingService {
     }
 
     /** 查询 wf_route 绑定（按 intent_code） */
-    private Map<String, Object> lookupRoute(String intentCode) {
+    private Map<String, Object> lookupRoute(String intentCode, ExecutionIdentity identity) {
         if (intentCode == null || intentCode.isBlank()) return null;
+        String tenantId = identity == null || identity.getTenantId() == null || identity.getTenantId().isBlank()
+                ? "default" : identity.getTenantId();
         try {
             return jdbc.queryForMap(
-                    "SELECT workflow_def_key, react_config FROM wf_route WHERE intent_code=? AND tenant_id='default' LIMIT 1",
-                    intentCode);
+                    "SELECT workflow_def_key, react_config FROM wf_route WHERE intent_code=? AND tenant_id=? LIMIT 1",
+                    intentCode, tenantId);
         } catch (EmptyResultDataAccessException e) {
             // 没有配置绑定时才按意图类型继续决策；数据库异常必须向上抛出，禁止故障时误入 ReAct。
             return null;

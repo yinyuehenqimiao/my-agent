@@ -50,6 +50,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AgentToolCatalog {
 
+    private static final java.util.Set<String> SUPPORTED_WORKFLOWS = java.util.Set.of("leave-approval");
+
     private final KnowledgeSearchFacade knowledgeSearchFacade;
     private final AgentConversationService conversationService;
     private final IntentNodeRegistry intentNodeRegistry;
@@ -99,7 +101,7 @@ public class AgentToolCatalog {
 
     /** 固定流程使用最小工具集，禁止把知识库和任意 MCP 工具带入业务办理链路。 */
     public Toolkit buildWorkflowToolkit(String workflowDefKey) {
-        if (!"leave-approval".equals(workflowDefKey)) {
+        if (!supportsWorkflow(workflowDefKey)) {
             throw new IllegalArgumentException("未配置固定流程工具集：" + workflowDefKey);
         }
         if (enterpriseTools == null) {
@@ -108,6 +110,11 @@ public class AgentToolCatalog {
         Toolkit toolkit = new Toolkit();
         enterpriseTools.tools(Source.WORKFLOW).forEach(toolkit::registerAgentTool);
         return toolkit;
+    }
+
+    /** 当前已完成专用工具集接入、可以安全执行的固定流程。 */
+    public boolean supportsWorkflow(String workflowDefKey) {
+        return SUPPORTED_WORKFLOWS.contains(workflowDefKey);
     }
 
     /**

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Route, Shield, Wrench } from "lucide-react";
+import { Route, Shield, Trash2, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
@@ -15,7 +16,10 @@ import {
   agentAdminService,
   ROUTE_DECISION_LABEL,
   TOOL_RISK_LABEL,
+  type RouteBinding,
+  type RouteOptions,
   type RouteSimulationResult,
+  type RouteTargetType,
   type ToolCatalogItem,
   type ToolSource,
 } from "@/services/agentAdminService";
@@ -146,10 +150,69 @@ export function AuditPage() {
 
 /** 路由模拟页：选择模拟用户与输入问题，对比路由决策。 */
 export function RouteSimulationPage() {
+  const [routes, setRoutes] = useState<RouteBinding[]>([]);
+  const [options, setOptions] = useState<RouteOptions>({ intents: [], workflows: [], reactConfigs: [] });
+  const [routeKey, setRouteKey] = useState("");
+  const [intentCode, setIntentCode] = useState("");
+  const [targetType, setTargetType] = useState<RouteTargetType>("WORKFLOW");
+  const [target, setTarget] = useState("");
+  const [saving, setSaving] = useState(false);
   const [question, setQuestion] = useState("");
   const [hasPendingAction, setHasPendingAction] = useState(false);
   const [result, setResult] = useState<RouteSimulationResult | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const loadRoutes = async () => {
+    try {
+      const [bindings, available] = await Promise.all([
+        agentAdminService.listRoutes(),
+        agentAdminService.getRouteOptions(),
+      ]);
+      setRoutes(Array.isArray(bindings) ? bindings : []);
+      setOptions(available || { intents: [], workflows: [], reactConfigs: [] });
+    } catch (error) {
+      toast.error(getErrorMessage(error, "加载执行管线失败"));
+    }
+  };
+
+  useEffect(() => { void loadRoutes(); }, []);
+
+  const saveRoute = async () => {
+    if (!routeKey || !intentCode || !target) {
+      toast.error("请完整选择业务意图、执行方式和执行目标");
+      return;
+    }
+    setSaving(true);
+    try {
+      await agentAdminService.saveRoute(routeKey, { intentCode, targetType, target });
+      toast.success("执行管线已保存");
+      await loadRoutes();
+    } catch (error) {
+      toast.error(getErrorMessage(error, "保存执行管线失败"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const editRoute = (route: RouteBinding) => {
+    setRouteKey(route.routeKey);
+    setIntentCode(route.intentCode);
+    setTargetType(route.targetType);
+    setTarget(route.target);
+  };
+
+  const deleteRoute = async (key: string) => {
+    if (!window.confirm("确定删除这条生产执行管线吗？删除后相关意图将无法进入固定流程。")) return;
+    try {
+      await agentAdminService.deleteRoute(key);
+      toast.success("执行管线已删除");
+      await loadRoutes();
+    } catch (error) {
+      toast.error(getErrorMessage(error, "删除执行管线失败"));
+    }
+  };
+
+  const targetOptions = targetType === "WORKFLOW" ? options.workflows : options.reactConfigs;
 
   const simulate = async () => {
     if (!question.trim()) {
@@ -170,11 +233,58 @@ export function RouteSimulationPage() {
   return (
     <div className="space-y-4 p-4">
       <div>
-        <h2 className="flex items-center gap-2 text-lg font-semibold"><Route className="h-5 w-5" /> 路由模拟</h2>
-        <p className="mt-1 text-sm text-slate-500">使用当前登录人的真实权限和后端意图识别结果，只做决策预览，不执行流程或工具。</p>
+        <h2 className="flex items-center gap-2 text-lg font-semibold"><Route className="h-5 w-5" /> 执行管线与路由模拟</h2>
+        <p className="mt-1 text-sm text-slate-500">先把业务意图绑定到已发布固定流程或受控开放式智能体，再用当前登录身份验证实际路由结果。</p>
       </div>
       <Card>
         <CardContent className="space-y-4 p-4">
+          <div>
+            <h3 className="font-medium">生产执行管线</h3>
+            <p className="text-sm text-slate-500">固定流程必须已发布且已接入运行时；每个业务意图只能绑定一条管线。</p>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-4">
+            <Input aria-label="路由标识" placeholder="路由标识，如 leave-route" value={routeKey}
+              onChange={(event) => setRouteKey(event.target.value.trim().toLowerCase())} />
+            <select aria-label="业务意图" className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              value={intentCode} onChange={(event) => {
+                const value = event.target.value;
+                setIntentCode(value);
+                if (!routeKey) setRouteKey(`${value}-route`);
+              }}>
+              <option value="">选择业务意图</option>
+              {options.intents.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </select>
+            <select aria-label="执行方式" className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              value={targetType} onChange={(event) => { setTargetType(event.target.value as RouteTargetType); setTarget(""); }}>
+              <option value="WORKFLOW">固定审批流程</option>
+              <option value="REACT">开放式智能体</option>
+            </select>
+            <select aria-label="执行目标" className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              value={target} onChange={(event) => setTarget(event.target.value)}>
+              <option value="">选择执行目标</option>
+              {targetOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </select>
+          </div>
+          <Button type="button" disabled={saving} onClick={() => void saveRoute()}>{saving ? "正在保存…" : "保存执行管线"}</Button>
+          <Table>
+            <TableHeader><TableRow><TableHead>业务意图</TableHead><TableHead>执行方式</TableHead><TableHead>执行目标</TableHead><TableHead className="w-36">操作</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {routes.length === 0 && <TableRow><TableCell colSpan={4} className="py-8 text-center text-slate-400">尚未配置生产执行管线</TableCell></TableRow>}
+              {routes.map((route) => (
+                <TableRow key={route.routeKey}>
+                  <TableCell><div>{route.intentName || route.intentCode}</div><div className="font-mono text-xs text-slate-400">{route.routeKey}</div></TableCell>
+                  <TableCell>{route.targetType === "WORKFLOW" ? "固定审批流程" : "开放式智能体"}</TableCell>
+                  <TableCell className="font-mono text-xs">{route.target}</TableCell>
+                  <TableCell><div className="flex gap-2"><Button type="button" variant="outline" size="sm" onClick={() => editRoute(route)}>编辑</Button><Button aria-label={`删除 ${route.intentName || route.intentCode}`} type="button" variant="ghost" size="sm" onClick={() => void deleteRoute(route.routeKey)}><Trash2 className="h-4 w-4" /></Button></div></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="space-y-4 p-4">
+          <h3 className="font-medium">使用真实身份模拟</h3>
           <Textarea
             rows={4}
             maxLength={2000}

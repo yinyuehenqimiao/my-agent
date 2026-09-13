@@ -53,7 +53,11 @@ class RoutingServiceTest {
     @Autowired private PolicyDecisionService policy;
 
     private com.myagent.framework.context.ExecutionIdentity identity(String userId) {
-        return LoginUser.builder().userId(userId).username(userId).build();
+        return LoginUser.builder().userId(userId).username(userId).tenantId("default").build();
+    }
+
+    private com.myagent.framework.context.ExecutionIdentity identity(String userId, String tenantId) {
+        return LoginUser.builder().userId(userId).username(userId).tenantId(tenantId).build();
     }
 
     @BeforeEach
@@ -62,6 +66,7 @@ class RoutingServiceTest {
         jdbc.update("DELETE FROM wf_route");
         jdbc.update("INSERT INTO wf_route(route_key,intent_code,workflow_def_key,react_config,tenant_id) VALUES('r1','leave-approval','leave-approval',NULL,'default')");
         jdbc.update("INSERT INTO wf_route(route_key,intent_code,workflow_def_key,react_config,tenant_id) VALUES('r2','open-analysis',NULL,'default','default')");
+        jdbc.update("INSERT INTO wf_route(route_key,intent_code,workflow_def_key,react_config,tenant_id) VALUES('r3','tenant-only','tenant-flow',NULL,'tenant-b')");
     }
 
     @Test
@@ -145,5 +150,17 @@ class RoutingServiceTest {
 
         assertThrows(DataAccessException.class,
                 () -> routing.route("open-analysis", IntentKind.MCP, 0.99, false, identity("e")));
+    }
+
+    @Test
+    void routeBindingUsesIdentityTenantInsteadOfDefaultTenant() {
+        var tenantRoute = routing.route("tenant-only", IntentKind.WORKFLOW, 0.95, false,
+                identity("employee-b", "tenant-b"));
+        var otherTenantRoute = routing.route("tenant-only", IntentKind.WORKFLOW, 0.95, false,
+                identity("employee-a", "tenant-a"));
+
+        assertEquals(RouteDecision.WORKFLOW, tenantRoute.getDecision());
+        assertEquals("tenant-flow", tenantRoute.getTarget());
+        assertEquals(RouteDecision.CLARIFY, otherTenantRoute.getDecision());
     }
 }

@@ -5,12 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn(),
   simulateRoute: vi.fn(),
+  listRoutes: vi.fn(),
+  getRouteOptions: vi.fn(),
+  saveRoute: vi.fn(),
+  deleteRoute: vi.fn(),
 }));
 
 vi.mock("@/services/agentAdminService", () => ({
   agentAdminService: {
     listTools: mocks.listTools,
     simulateRoute: mocks.simulateRoute,
+    listRoutes: mocks.listRoutes,
+    getRouteOptions: mocks.getRouteOptions,
+    saveRoute: mocks.saveRoute,
+    deleteRoute: mocks.deleteRoute,
   },
   ROUTE_DECISION_LABEL: {
     WORKFLOW: "固定流程",
@@ -27,7 +35,15 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 import { RouteSimulationPage, ToolCenterPage } from "./WorkflowAdminPages";
 
 describe("工作流管理辅助页面", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.listRoutes.mockResolvedValue([]);
+    mocks.getRouteOptions.mockResolvedValue({
+      intents: [{ value: "leave-approval", label: "请假申请" }],
+      workflows: [{ value: "leave-approval", label: "请假审批" }],
+      reactConfigs: [{ value: "default", label: "标准开放问答" }],
+    });
+  });
   afterEach(cleanup);
 
   it("工具中心展示 Tool Gateway 返回的真实中文工具信息", async () => {
@@ -77,6 +93,22 @@ describe("工作流管理辅助页面", () => {
       hasPendingAction: false,
     }));
     expect(await screen.findByText("固定流程")).toBeTruthy();
-    expect(screen.getByText("请假审批")).toBeTruthy();
+    expect(screen.getAllByText("请假审批").length).toBeGreaterThan(0);
+  });
+
+  it("管理员通过中文选项保存生产执行管线", async () => {
+    mocks.saveRoute.mockResolvedValue({ routeKey: "leave-approval-route" });
+    render(<RouteSimulationPage />);
+
+    await screen.findByRole("option", { name: "请假申请" });
+    fireEvent.change(screen.getByLabelText("业务意图"), { target: { value: "leave-approval" } });
+    fireEvent.change(screen.getByLabelText("执行目标"), { target: { value: "leave-approval" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存执行管线" }));
+
+    await waitFor(() => expect(mocks.saveRoute).toHaveBeenCalledWith("leave-approval-route", {
+      intentCode: "leave-approval",
+      targetType: "WORKFLOW",
+      target: "leave-approval",
+    }));
   });
 });
