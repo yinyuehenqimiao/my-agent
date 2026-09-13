@@ -3,6 +3,8 @@ import type {
   AgentHintPayload,
   AgentMessageDelta,
   AgentMetaPayload,
+  AgentRouteDecisionPayload,
+  AgentWorkflowProgressPayload,
   AgentToolProgress
 } from "@/types/agent";
 
@@ -12,6 +14,9 @@ export interface AgentStreamHandlers {
   onThinking?: (payload: AgentMessageDelta) => void;
   onTool?: (payload: AgentToolProgress) => void;
   onHint?: (payload: AgentHintPayload) => void;
+  onRouteDecision?: (payload: AgentRouteDecisionPayload) => void;
+  onWorkflowProgress?: (payload: AgentWorkflowProgressPayload) => void;
+  onPolicyDenied?: (payload: { reason?: string }) => void;
   onFinish?: (payload: AgentCompletionPayload) => void;
   onDone?: () => void;
   onCancel?: (payload: AgentCompletionPayload) => void;
@@ -81,6 +86,15 @@ async function readSseStream(
         break;
       case "hint":
         handlers.onHint?.(payload as AgentHintPayload);
+        break;
+      case "route_decision":
+        handlers.onRouteDecision?.(payload as AgentRouteDecisionPayload);
+        break;
+      case "workflow_progress":
+        handlers.onWorkflowProgress?.(payload as AgentWorkflowProgressPayload);
+        break;
+      case "policy_denied":
+        handlers.onPolicyDenied?.(payload as { reason?: string });
         break;
       case "finish":
         handlers.onFinish?.(payload as AgentCompletionPayload);

@@ -45,6 +45,10 @@ public class RoutingService {
     @Value("${myagent.routing.highRiskPrefixes:leave-approval,leave,approval,payment,write}")
     private String highRiskPrefixesRaw;
 
+    /** 当前仅有请假确认动作；扩展多流程时应由待办记录携带 defKey。 */
+    @Value("${myagent.routing.pendingWorkflowDefKey:leave-approval}")
+    private String pendingWorkflowDefKey;
+
     /**
      * 路由决策。
      *
@@ -58,7 +62,7 @@ public class RoutingService {
                              boolean hasPendingAction, ExecutionIdentity identity) {
         // 1. 待确认/审批优先走 Workflow（继续已有流程）
         if (hasPendingAction) {
-            return RouteResult.of(RouteDecision.WORKFLOW, null, "存在待确认/审批动作", confidence);
+            return RouteResult.of(RouteDecision.WORKFLOW, pendingWorkflowDefKey, "存在待确认/审批动作", confidence);
         }
         // 2. 查 wf_route 绑定
         Map<String, Object> binding = lookupRoute(intentCode);

@@ -17,15 +17,23 @@
 
 package com.myagent.agent.service.impl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myagent.agent.config.ReActAgentProvider;
 import com.myagent.agent.config.ReActAgentProvider.ActiveAgent;
 import com.myagent.agent.service.AgentConversationService;
 import com.myagent.agent.service.handler.AgentRunGate;
 import com.myagent.agent.tool.AgentToolCatalog.ResolvedCatalog;
+import com.myagent.agent.routing.ChatRoutePlan;
+import com.myagent.agent.routing.ChatRoutePlanner;
+import com.myagent.agent.routing.EnterprisePendingActionResolver;
 import com.myagent.framework.context.LoginUser;
 import com.myagent.framework.context.UserContext;
 import com.myagent.framework.exception.ClientException;
+import com.myagent.framework.routing.RouteDecision;
+import com.myagent.framework.routing.RouteResult;
 import com.myagent.framework.web.StreamTaskManager;
+import com.myagent.rag.enums.IntentKind;
+import com.myagent.rag.service.KnowledgeSearchFacade;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import org.junit.jupiter.api.AfterEach;
@@ -43,11 +51,15 @@ import java.util.function.Consumer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -61,6 +73,9 @@ class AgentChatServiceImplTest {
     private AgentConversationService conversationService;
     private StreamTaskManager taskManager;
     private AgentRunGate runGate;
+    private ChatRoutePlanner routePlanner;
+    private KnowledgeSearchFacade knowledgeSearchFacade;
+    private EnterprisePendingActionResolver pendingActionResolver;
     private AtomicInteger gateReleased;
     private ReActAgent agent;
     private AgentChatServiceImpl service;
@@ -71,8 +86,12 @@ class AgentChatServiceImplTest {
         conversationService = mock(AgentConversationService.class);
         taskManager = mock(StreamTaskManager.class);
         runGate = mock(AgentRunGate.class);
+        routePlanner = mock(ChatRoutePlanner.class);
+        knowledgeSearchFacade = mock(KnowledgeSearchFacade.class);
+        pendingActionResolver = mock(EnterprisePendingActionResolver.class);
         agent = mock(ReActAgent.class);
-        service = new AgentChatServiceImpl(agentProvider, conversationService, taskManager, runGate);
+        service = new AgentChatServiceImpl(agentProvider, conversationService, taskManager, runGate,
+                routePlanner, knowledgeSearchFacade, pendingActionResolver, new ObjectMapper().findAndRegisterModules());
 
         gateReleased = new AtomicInteger();
         when(runGate.acquire(anyString(), anyString(), anyString())).thenReturn(gateReleased::incrementAndGet);
@@ -80,6 +99,9 @@ class AgentChatServiceImplTest {
                 agent, new ResolvedCatalog("知识库工具描述", List.of(), List.of())));
         when(conversationService.touchConversation(anyString(), anyString(), anyString())).thenReturn("会话标题");
         when(conversationService.addUserMessage(anyString(), anyString(), anyString())).thenReturn("m-3003");
+        when(routePlanner.plan(anyString(), anyBoolean(), any())).thenReturn(new ChatRoutePlan(
+                "open-question", "开放问题", IntentKind.MCP,
+                RouteResult.of(RouteDecision.REACT, "default", "授权 ReAct", 0.9)));
         UserContext.set(LoginUser.builder().userId(USER_ID).username("tester").build());
     }
 
@@ -254,5 +276,70 @@ class AgentChatServiceImplTest {
 
         // 正常完成也会触发 completion 回调，这里再取消等于每个请求都往 Redis 写一条 30 分钟死标记
         verify(taskManager, never()).cancel(anyString());
+    }
+
+    @Test
+    void shouldNotStartReactWhenPolicyDeniesRequest() {
+        when(routePlanner.plan(anyString(), anyBoolean(), any())).thenReturn(new ChatRoutePlan(
+                "leave-write", "高风险写操作", IntentKind.MCP,
+                RouteResult.of(RouteDecision.DENY, null, "高风险操作未授权", 0.99)));
+
+        service.streamChat("替别人提交请假", CONVERSATION_ID, new SseEmitter());
+
+        verify(agentProvider, never()).getAgent();
+        verify(agentProvider, never()).getWorkflowAgent(anyString());
+        verify(conversationService).addAssistantMessage(eq(CONVERSATION_ID), eq(USER_ID),
+                contains("未通过权限策略"), eq(""), any(), eq("m-3003"), eq(com.myagent.agent.enums.AgentMessageStatus.NORMAL));
+        assertThat(gateReleased.get()).isOne();
+    }
+
+    @Test
+    void shouldUseDedicatedWorkflowAgentInsteadOfOpenReactAgent() {
+        when(routePlanner.plan(anyString(), anyBoolean(), any())).thenReturn(new ChatRoutePlan(
+                "leave-approval", "请假办理", IntentKind.WORKFLOW,
+                RouteResult.of(RouteDecision.WORKFLOW, "leave-approval", "高置信固定流程", 0.95)));
+        when(agentProvider.getWorkflowAgent("leave-approval")).thenReturn(new ActiveAgent(
+                agent, new ResolvedCatalog("知识库工具描述", List.of(), List.of())));
+        when(agent.streamEvents(anyString(), any(RuntimeContext.class))).thenReturn(Flux.empty());
+
+        service.streamChat("我要请年假", CONVERSATION_ID, new SseEmitter());
+
+        verify(agentProvider).getWorkflowAgent("leave-approval");
+        verify(agentProvider, never()).getAgent();
+    }
+
+    @Test
+    void shouldAnswerKnowledgeIntentThroughRagWithoutStartingAnyAgent() {
+        when(routePlanner.plan(anyString(), anyBoolean(), any())).thenReturn(new ChatRoutePlan(
+                "leave-policy", "请假制度", IntentKind.KB,
+                RouteResult.of(RouteDecision.SYSTEM, null, "知识库回答", 0.91)));
+        when(conversationService.loadRecentTurns(CONVERSATION_ID, USER_ID, 2)).thenReturn(List.of());
+        when(knowledgeSearchFacade.searchWithEvidence("年假制度是什么", List.of()))
+                .thenReturn(new KnowledgeSearchFacade.KnowledgeAnswer("SUCCESS", "年假制度答案", List.of()));
+
+        service.streamChat("年假制度是什么", CONVERSATION_ID, new SseEmitter());
+
+        verify(knowledgeSearchFacade, timeout(2_000)).searchWithEvidence("年假制度是什么", List.of());
+        verify(conversationService, timeout(2_000)).addAssistantMessage(eq(CONVERSATION_ID), eq(USER_ID),
+                eq("年假制度答案"), eq(""), any(), eq("m-3003"), eq(com.myagent.agent.enums.AgentMessageStatus.NORMAL));
+        verify(agentProvider, never()).getAgent();
+        verify(agentProvider, never()).getWorkflowAgent(anyString());
+    }
+
+    @Test
+    void shouldStillFinishStreamWhenDirectAnswerPersistenceFails() throws IOException {
+        when(routePlanner.plan(anyString(), anyBoolean(), any())).thenReturn(new ChatRoutePlan(
+                "greeting", "问候", IntentKind.SYSTEM,
+                RouteResult.of(RouteDecision.SYSTEM, null, "系统回答", 0.99)));
+        when(conversationService.addAssistantMessage(anyString(), anyString(), anyString(), anyString(),
+                any(), anyString(), any())).thenThrow(new IllegalStateException("消息库不可用"));
+
+        SseEmitter emitter = mock(SseEmitter.class);
+        service.streamChat("你好", CONVERSATION_ID, emitter);
+
+        assertThat(gateReleased.get()).isOne();
+        verify(taskManager).unregister(anyString());
+        // meta + route + message + finish + done；落库失败不能让前端停在生成中。
+        verify(emitter, times(5)).send(any(SseEmitter.SseEventBuilder.class));
     }
 }

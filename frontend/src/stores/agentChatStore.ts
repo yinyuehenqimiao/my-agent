@@ -9,6 +9,8 @@ import type {
   AgentMessage,
   AgentMessageDelta,
   AgentMetaPayload,
+  AgentRouteDecisionPayload,
+  AgentWorkflowProgressPayload,
   AgentRawFrame,
   AgentSession,
   AgentToolProgress
@@ -534,6 +536,49 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => {
               return { ...message, blocks };
             })
           }));
+        },
+        onRouteDecision: (payload: AgentRouteDecisionPayload) => {
+          if (!payload?.decision || get().streamingMessageId !== assistantId) return;
+          const labels: Record<AgentRouteDecisionPayload["decision"], string> = {
+            WORKFLOW: "固定流程",
+            REACT: "智能体处理",
+            SYSTEM: "知识与系统回答",
+            CLARIFY: "需要补充信息",
+            DENY: "权限策略拒绝"
+          };
+          set((state) => ({
+            streamOpenBlockId: null,
+            messages: state.messages.map((message) => {
+              if (message.id !== state.streamingMessageId) return message;
+              const blocks = sealOpenBlock([...(message.blocks ?? [])], state.streamOpenBlockId);
+              blocks.push({
+                id: nextBlockId(),
+                kind: "hint",
+                at: nowHms(),
+                text: `处理方式：${labels[payload.decision]}${payload.intentName ? ` · ${payload.intentName}` : ""}`
+              });
+              return { ...message, blocks };
+            })
+          }));
+        },
+        onWorkflowProgress: (payload: AgentWorkflowProgressPayload) => {
+          if (!payload?.node || get().streamingMessageId !== assistantId) return;
+          set((state) => ({
+            messages: state.messages.map((message) =>
+              message.id === state.streamingMessageId
+                ? {
+                    ...message,
+                    blocks: [
+                      ...(message.blocks ?? []),
+                      { id: nextBlockId(), kind: "hint" as const, at: nowHms(), text: `流程节点：${payload.node}` }
+                    ]
+                  }
+                : message
+            )
+          }));
+        },
+        onPolicyDenied: (payload: { reason?: string }) => {
+          if (payload?.reason) toast.error("请求未通过权限策略");
         },
         onFinish: (payload: AgentCompletionPayload) => {
           if (get().streamingMessageId !== assistantId) return;

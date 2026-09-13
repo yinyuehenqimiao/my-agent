@@ -45,6 +45,15 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @ConditionalOnProperty(name = "myagent.enterprise.enabled", havingValue = "true")
 public class EnterpriseTools {
+    private static final Map<String, String> DISPLAY_NAMES = Map.of(
+            "get_my_profile", "我的员工档案",
+            "get_leave_balance", "我的年假余额",
+            "list_my_leave_requests", "我的请假申请",
+            "get_leave_request_detail", "请假申请详情",
+            "list_my_approval_tasks", "我的审批待办",
+            "prepare_leave_request", "生成请假确认卡",
+            "prepare_approval_decision", "生成审批确认卡",
+            "prepare_leave_withdrawal", "生成撤回确认卡");
     private final EnterpriseService service;
     private final ObjectMapper json;
     private final Clock enterpriseClock;
@@ -133,7 +142,18 @@ public class EnterpriseTools {
     // ===== AgentScope 协议适配：构建 ToolInvocation 并经网关执行 =====
 
     public List<AgentTool> tools() {
-        return toolGateway == null ? List.of() : registeredNames().stream().map(this::agentTool).toList();
+        return tools(Source.REACT);
+    }
+
+    /** 为不同编排管线创建带可信来源标记的工具适配器。 */
+    public List<AgentTool> tools(Source source) {
+        return toolGateway == null ? List.of() : registeredNames().stream()
+                .map(name -> agentTool(name, source))
+                .toList();
+    }
+
+    public static Map<String, String> displayNames() {
+        return DISPLAY_NAMES;
     }
 
     private List<String> registeredNames() {
@@ -142,21 +162,23 @@ public class EnterpriseTools {
                 "prepare_leave_request", "prepare_approval_decision", "prepare_leave_withdrawal");
     }
 
-    private AgentTool agentTool(String name) {
+    private AgentTool agentTool(String name, Source source) {
+        ToolDefinition definition = toolGateway.listDefinitions().stream()
+                .filter(item -> name.equals(item.getName()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("企业工具未注册：" + name));
         return new AgentTool() {
             @Override public String getName() { return name; }
-            @Override public String getDescription() { return "企业工具：" + name; }
-            @Override public Map<String, Object> getParameters() {
-                return Map.of("type", "object", "properties", Map.of(), "required", List.of(), "additionalProperties", true);
-            }
-            @Override public boolean isReadOnly() { return !name.startsWith("prepare_"); }
+            @Override public String getDescription() { return definition.getDescription(); }
+            @Override public Map<String, Object> getParameters() { return definition.getInputSchema(); }
+            @Override public boolean isReadOnly() { return definition.isReadOnly(); }
             @Override public Mono<ToolResultBlock> callAsync(ToolCallParam p) {
-                return Mono.fromCallable(() -> invokeViaGateway(name, p)).subscribeOn(Schedulers.boundedElastic());
+                return Mono.fromCallable(() -> invokeViaGateway(name, source, p)).subscribeOn(Schedulers.boundedElastic());
             }
         };
     }
 
-    private ToolResultBlock invokeViaGateway(String name, ToolCallParam p) throws Exception {
+    private ToolResultBlock invokeViaGateway(String name, Source source, ToolCallParam p) throws Exception {
         String trace = p.getToolUseBlock() != null && p.getToolUseBlock().getId() != null
                 ? p.getToolUseBlock().getId() : UUID.randomUUID().toString();
         ExecutionIdentity identity = identityFrom(p);
@@ -164,7 +186,7 @@ public class EnterpriseTools {
                 .toolName(name)
                 .input(p.getInput() == null ? Map.of() : p.getInput())
                 .identity(identity)
-                .source(Source.REACT)
+                .source(source)
                 .traceId(trace)
                 .idempotencyKey(name.startsWith("prepare_") ? trace : null)
                 .build();

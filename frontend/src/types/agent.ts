@@ -77,6 +77,21 @@ export interface AgentHintPayload {
   text: string;
 }
 
+export interface AgentRouteDecisionPayload {
+  decision: "WORKFLOW" | "REACT" | "SYSTEM" | "CLARIFY" | "DENY";
+  target?: string;
+  reason?: string;
+  confidence: number;
+  intentCode?: string;
+  intentName?: string;
+}
+
+export interface AgentWorkflowProgressPayload {
+  workflowDefKey: string;
+  node: string;
+  status: string;
+}
+
 export interface AgentCompletionPayload {
   messageId?: string | null;
   title?: string | null;

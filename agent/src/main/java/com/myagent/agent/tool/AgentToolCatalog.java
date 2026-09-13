@@ -27,6 +27,7 @@ import com.myagent.rag.core.mcp.McpToolRegistry;
 import com.myagent.rag.core.prompt.AgentPromptResolver;
 import com.myagent.rag.core.prompt.AgentPromptSlot;
 import com.myagent.rag.service.KnowledgeSearchFacade;
+import com.myagent.framework.tool.ToolDefinition.Source;
 import io.agentscope.core.tool.Toolkit;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 import lombok.RequiredArgsConstructor;
@@ -69,7 +70,8 @@ public class AgentToolCatalog {
     public ResolvedCatalog resolve() {
         List<String> unavailableToolIds = new ArrayList<>();
         List<McpToolBinding> bindings = resolveMcpToolBindings(unavailableToolIds);
-        return new ResolvedCatalog(resolveKnowledgeToolDescription(), bindings, unavailableToolIds);
+        return new ResolvedCatalog(resolveKnowledgeToolDescription(), bindings, unavailableToolIds,
+                enterpriseTools == null ? Map.of() : EnterpriseTools.displayNames());
     }
 
     /**
@@ -87,6 +89,24 @@ public class AgentToolCatalog {
         // 不可用只在重建这一刻报：解析每请求都走，放解析里会刷屏
         catalog.unavailableToolIds.forEach(toolId ->
                 log.warn("意图树配置的 MCP 工具当前不可用, toolId: {}", toolId));
+        return toolkit;
+    }
+
+    /** 固定流程展示快照不读取知识库提示词与 MCP 注册表，避免无关组件故障拖垮业务办理。 */
+    public ResolvedCatalog resolveWorkflowCatalog() {
+        return new ResolvedCatalog("固定流程不使用知识库", List.of(), List.of(), EnterpriseTools.displayNames());
+    }
+
+    /** 固定流程使用最小工具集，禁止把知识库和任意 MCP 工具带入业务办理链路。 */
+    public Toolkit buildWorkflowToolkit(String workflowDefKey) {
+        if (!"leave-approval".equals(workflowDefKey)) {
+            throw new IllegalArgumentException("未配置固定流程工具集：" + workflowDefKey);
+        }
+        if (enterpriseTools == null) {
+            throw new IllegalStateException("企业工具未启用，无法执行固定流程");
+        }
+        Toolkit toolkit = new Toolkit();
+        enterpriseTools.tools(Source.WORKFLOW).forEach(toolkit::registerAgentTool);
         return toolkit;
     }
 
@@ -171,6 +191,14 @@ public class AgentToolCatalog {
                 String knowledgeToolDescription,
                 List<McpToolBinding> bindings,
                 List<String> unavailableToolIds) {
+            this(knowledgeToolDescription, bindings, unavailableToolIds, Map.of());
+        }
+
+        public ResolvedCatalog(
+                String knowledgeToolDescription,
+                List<McpToolBinding> bindings,
+                List<String> unavailableToolIds,
+                Map<String, String> additionalDisplayNames) {
             this.knowledgeToolDescription = knowledgeToolDescription;
             this.bindings = List.copyOf(bindings);
             this.unavailableToolIds = List.copyOf(unavailableToolIds);
@@ -178,6 +206,7 @@ public class AgentToolCatalog {
             Map<String, String> names = new LinkedHashMap<>();
             names.put(KnowledgeSearchTool.TOOL_NAME, KnowledgeSearchTool.DISPLAY_NAME);
             this.bindings.forEach(binding -> names.put(binding.toolId(), binding.displayName()));
+            names.putAll(additionalDisplayNames);
             this.displayNames = Map.copyOf(names);
             this.fingerprint = new ToolCatalogFingerprint(knowledgeToolDescription, this.bindings.stream()
                     .map(binding -> new McpToolFingerprint(

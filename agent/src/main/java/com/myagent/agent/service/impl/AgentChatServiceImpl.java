@@ -19,19 +19,32 @@ package com.myagent.agent.service.impl;
 
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myagent.agent.config.ConditionalOnAgentEngine;
 import com.myagent.agent.config.ReActAgentProvider;
 import com.myagent.agent.config.ReActAgentProvider.ActiveAgent;
 import com.myagent.agent.dto.AgentMetaPayload;
+import com.myagent.agent.dto.AgentBlock;
+import com.myagent.agent.dto.AgentCompletionPayload;
+import com.myagent.agent.dto.AgentMessageDelta;
+import com.myagent.agent.dto.AgentToolProgress;
+import com.myagent.agent.enums.AgentMessageStatus;
 import com.myagent.agent.enums.AgentSSEEventType;
+import com.myagent.agent.routing.ChatRoutePlan;
+import com.myagent.agent.routing.ChatRoutePlanner;
+import com.myagent.agent.routing.EnterprisePendingActionResolver;
 import com.myagent.agent.service.AgentChatService;
 import com.myagent.agent.service.AgentConversationService;
 import com.myagent.agent.service.handler.AgentRunGate;
 import com.myagent.agent.service.handler.AgentRunHandle;
 import com.myagent.agent.service.handler.AgentStreamEventBridge;
 import com.myagent.framework.context.UserContext;
+import com.myagent.framework.context.LoginUser;
+import com.myagent.framework.routing.RouteDecision;
 import com.myagent.framework.web.SseEmitterSender;
 import com.myagent.framework.web.StreamTaskManager;
+import com.myagent.rag.enums.IntentKind;
+import com.myagent.rag.service.KnowledgeSearchFacade;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
@@ -40,8 +53,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.Disposable;
+import reactor.core.Disposables;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -58,10 +78,15 @@ public class AgentChatServiceImpl implements AgentChatService {
     private final AgentConversationService conversationService;
     private final StreamTaskManager taskManager;
     private final AgentRunGate runGate;
+    private final ChatRoutePlanner routePlanner;
+    private final KnowledgeSearchFacade knowledgeSearchFacade;
+    private final EnterprisePendingActionResolver pendingActionResolver;
+    private final ObjectMapper objectMapper;
 
     @Override
     public void streamChat(String question, String conversationId, SseEmitter emitter) {
-        String userId = UserContext.getUserId();
+        LoginUser identity = UserContext.requireUser();
+        String userId = identity.getUserId();
         String actualConversationId = StrUtil.isBlank(conversationId)
                 ? IdUtil.getSnowflakeNextIdStr()
                 : conversationId;
@@ -71,7 +96,7 @@ public class AgentChatServiceImpl implements AgentChatService {
         Runnable releaseGate = runGate.acquire(userId, taskId, actualConversationId);
         boolean started = false;
         try {
-            startRun(question, userId, actualConversationId, taskId, emitter, releaseGate);
+            startRun(question, identity, actualConversationId, taskId, emitter, releaseGate);
             started = true;
         } finally {
             // 启动期还没有收尾路可挂，就地归还闸门并撤销任务登记，否则该用户被挡到 TTL 过期
@@ -83,13 +108,18 @@ public class AgentChatServiceImpl implements AgentChatService {
         }
     }
 
-    private void startRun(String question, String userId, String conversationId, String taskId,
+    private void startRun(String question, LoginUser identity, String conversationId, String taskId,
                           SseEmitter emitter, Runnable releaseGate) {
+        String userId = identity.getUserId();
         SseEmitterSender sender = new SseEmitterSender(emitter);
         sender.sendEvent(AgentSSEEventType.META.value(), new AgentMetaPayload(conversationId, taskId));
 
         String title = conversationService.touchConversation(conversationId, userId, question);
         String questionMessageId = conversationService.addUserMessage(conversationId, userId, question);
+
+        boolean hasPendingAction = pendingActionResolver.hasPendingAction(userId, conversationId);
+        ChatRoutePlan plan = routePlanner.plan(question, hasPendingAction, identity);
+        sender.sendEvent(AgentSSEEventType.ROUTE_DECISION.value(), routePayload(plan));
 
         AgentRunHandle runHandle = new AgentRunHandle(taskId, sender, taskManager);
         runHandle.onRelease(releaseGate);
@@ -97,8 +127,46 @@ public class AgentChatServiceImpl implements AgentChatService {
         // 状态已在框架侧随本轮落库（正常完成与打断各自 save 后才发终答），下一轮从 PG 读回，代价是一次反序列化
         runHandle.onRelease(() -> agentProvider.evictStateCache(userId, conversationId));
         bindEmitterLifecycle(emitter, runHandle, taskId);
-        // 实例与目录快照成对取出：事件展示名与 Toolkit 出自同一次解析
-        ActiveAgent activeAgent = agentProvider.getAgent();
+
+        RouteDecision decision = plan.route().getDecision();
+        if (decision == RouteDecision.DENY) {
+            registerDirect(taskId, userId, title, runHandle);
+            completeDirect(runHandle, conversationId, userId, title, questionMessageId,
+                    "当前请求未通过权限策略，无法执行。" + reasonSuffix(plan), true);
+            return;
+        }
+        if (decision == RouteDecision.CLARIFY) {
+            registerDirect(taskId, userId, title, runHandle);
+            completeDirect(runHandle, conversationId, userId, title, questionMessageId,
+                    "请补充更明确的业务对象、操作或必要参数。" + reasonSuffix(plan), false);
+            return;
+        }
+        if (decision == RouteDecision.SYSTEM && plan.intentKind() == IntentKind.KB) {
+            registerDirect(taskId, userId, title, runHandle);
+            startKnowledgeRun(question, identity, conversationId, userId, title, questionMessageId, runHandle);
+            return;
+        }
+        if (decision == RouteDecision.SYSTEM) {
+            registerDirect(taskId, userId, title, runHandle);
+            completeDirect(runHandle, conversationId, userId, title, questionMessageId,
+                    "你好，我是企业智能助手，可以帮助你查询公司制度、个人信息并办理已配置的业务流程。", false);
+            return;
+        }
+
+        ActiveAgent activeAgent = decision == RouteDecision.WORKFLOW
+                ? agentProvider.getWorkflowAgent(plan.route().getTarget())
+                : agentProvider.getAgent();
+        if (decision == RouteDecision.WORKFLOW) {
+            sender.sendEvent(AgentSSEEventType.WORKFLOW_PROGRESS.value(), Map.of(
+                    "workflowDefKey", plan.route().getTarget(), "node", "参数收集与确认", "status", "RUNNING"));
+        }
+        startAgentRun(question, userId, conversationId, taskId, title, questionMessageId,
+                runHandle, activeAgent);
+    }
+
+    private void startAgentRun(String question, String userId, String conversationId, String taskId,
+                               String title, String questionMessageId, AgentRunHandle runHandle,
+                               ActiveAgent activeAgent) {
         AgentStreamEventBridge bridge = new AgentStreamEventBridge(AgentStreamEventBridge.Params.builder()
                 .runHandle(runHandle)
                 .conversationService(conversationService)
@@ -108,19 +176,144 @@ public class AgentChatServiceImpl implements AgentChatService {
                 .title(title)
                 .replyToMessageId(questionMessageId)
                 .build());
-        taskManager.register(taskId, userId, bridge::finishCancelledStream);
-
         @SuppressWarnings("resource")
         ReActAgent agent = activeAgent.agent();
+        Disposable.Swap subscription = Disposables.swap();
+        runHandle.bindStream(subscription, () -> agent.interrupt(userId, conversationId));
+        taskManager.register(taskId, userId, bridge::finishCancelledStream);
+        taskManager.bindHandle(taskId, runHandle::interruptUpstream);
+
         Flux<AgentEvent> events = agent.streamEvents(question, RuntimeContext.builder()
                 .userId(userId)
                 .sessionId(conversationId)
                 .build());
         Disposable disposable = events.subscribe(bridge::onEvent, bridge::onError, bridge::onComplete);
 
-        // 取消动作先断流再置中断旗标，收尾（落库 + cancel/done 事件）由 finalizer 完成
-        runHandle.bindStream(disposable, () -> agent.interrupt(userId, conversationId));
-        taskManager.bindHandle(taskId, runHandle::interruptUpstream);
+        // 订阅句柄通过 Swap 后补；若取消早到，后放入的订阅会立即 dispose，避免启动窗口漏取消。
+        subscription.update(disposable);
+    }
+
+    private void startKnowledgeRun(String question, LoginUser identity, String conversationId, String userId,
+                                   String title, String questionMessageId, AgentRunHandle runHandle) {
+        Disposable.Swap subscription = Disposables.swap();
+        runHandle.bindStream(subscription, () -> { });
+        taskManager.bindHandle(runHandle.getTaskId(), runHandle::interruptUpstream);
+        Disposable disposable = Mono.fromCallable(() -> {
+                    LoginUser previous = UserContext.get();
+                    try {
+                        UserContext.set(identity);
+                        return knowledgeSearchFacade.searchWithEvidence(question,
+                                conversationService.loadRecentTurns(conversationId, userId, 2));
+                    } finally {
+                        if (previous == null) UserContext.clear();
+                        else UserContext.set(previous);
+                    }
+                })
+                .subscribeOn(Schedulers.boundedElastic())
+                .subscribe(answer -> {
+                    completeKnowledge(runHandle, conversationId, userId, title, questionMessageId, answer);
+                }, error -> runHandle.fail(error, () -> {
+                    runHandle.getSender().sendEvent(AgentSSEEventType.ERROR.value(),
+                            Map.of("error", "知识库查询失败，请稍后重试"));
+                    runHandle.getSender().sendEvent(AgentSSEEventType.DONE.value(), "[DONE]");
+                }));
+        subscription.update(disposable);
+    }
+
+    private void completeDirect(AgentRunHandle runHandle, String conversationId, String userId, String title,
+                                String replyToMessageId, String content, boolean denied) {
+        List<AgentBlock> blocks = List.of(answerBlock(content));
+        runHandle.complete(() -> {
+            if (denied) {
+                runHandle.getSender().sendEvent(AgentSSEEventType.POLICY_DENIED.value(), Map.of("reason", content));
+            }
+            runHandle.getSender().sendEvent(AgentSSEEventType.MESSAGE.value(), new AgentMessageDelta("response", content));
+            String messageId = persistDirectAnswer(conversationId, userId, replyToMessageId, content, blocks);
+            runHandle.getSender().sendEvent(AgentSSEEventType.FINISH.value(),
+                    new AgentCompletionPayload(messageId, title, AgentMessageStatus.NORMAL.name()));
+            runHandle.getSender().sendEvent(AgentSSEEventType.DONE.value(), "[DONE]");
+        });
+    }
+
+    private void completeKnowledge(AgentRunHandle runHandle, String conversationId, String userId, String title,
+                                   String replyToMessageId, KnowledgeSearchFacade.KnowledgeAnswer answer) {
+        String evidenceJson;
+        try {
+            evidenceJson = objectMapper.writeValueAsString(Map.of(
+                    "status", answer.status(), "sources", answer.sources()));
+        } catch (Exception error) {
+            log.warn("知识来源序列化失败, conversationId: {}", conversationId, error);
+            evidenceJson = "{\"status\":\"SOURCE_SERIALIZATION_FAILED\",\"sources\":[]}";
+        }
+        String finalEvidenceJson = evidenceJson;
+        runHandle.complete(() -> {
+            if (!answer.sources().isEmpty()) {
+                runHandle.getSender().sendEvent(AgentSSEEventType.TOOL.value(),
+                        new AgentToolProgress("search_knowledge", "知识来源", "start", null, null));
+                runHandle.getSender().sendEvent(AgentSSEEventType.TOOL.value(),
+                        new AgentToolProgress("search_knowledge", "知识来源", "end", finalEvidenceJson, true));
+            }
+            runHandle.getSender().sendEvent(AgentSSEEventType.MESSAGE.value(),
+                    new AgentMessageDelta("response", answer.answer()));
+            List<AgentBlock> blocks = new java.util.ArrayList<>();
+            if (!answer.sources().isEmpty()) {
+                blocks.add(AgentBlock.builder().kind("tool").at(nowText())
+                        .name("search_knowledge").displayName("知识来源")
+                        .status("done").result(finalEvidenceJson).build());
+            }
+            blocks.add(answerBlock(answer.answer()));
+            String messageId = persistDirectAnswer(
+                    conversationId, userId, replyToMessageId, answer.answer(), blocks);
+            runHandle.getSender().sendEvent(AgentSSEEventType.FINISH.value(),
+                    new AgentCompletionPayload(messageId, title, AgentMessageStatus.NORMAL.name()));
+            runHandle.getSender().sendEvent(AgentSSEEventType.DONE.value(), "[DONE]");
+        });
+    }
+
+    private String persistDirectAnswer(String conversationId, String userId, String replyToMessageId,
+                                       String content, List<AgentBlock> blocks) {
+        try {
+            return conversationService.addAssistantMessage(conversationId, userId, content, "",
+                    blocks, replyToMessageId, AgentMessageStatus.NORMAL);
+        } catch (Exception error) {
+            // 与 ReAct 收尾一致：落库故障不能吞掉 finish/done，让前端永远停在“生成中”。
+            log.error("路由直答消息落库失败, conversationId: {}", conversationId, error);
+            return null;
+        }
+    }
+
+    private AgentBlock answerBlock(String content) {
+        return AgentBlock.builder().kind("answer").at(nowText()).text(content).build();
+    }
+
+    private String nowText() {
+        return LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+    }
+
+    private void finishCancelledDirect(AgentRunHandle runHandle, String title) {
+        runHandle.cancel(() -> {
+            runHandle.getSender().sendEvent(AgentSSEEventType.CANCEL.value(),
+                    new AgentCompletionPayload(null, title, AgentMessageStatus.INTERRUPTED.name()));
+            runHandle.getSender().sendEvent(AgentSSEEventType.DONE.value(), "[DONE]");
+        });
+    }
+
+    private void registerDirect(String taskId, String userId, String title, AgentRunHandle runHandle) {
+        taskManager.register(taskId, userId, () -> finishCancelledDirect(runHandle, title));
+    }
+
+    private Map<String, Object> routePayload(ChatRoutePlan plan) {
+        return Map.of(
+                "decision", plan.route().getDecision().name(),
+                "target", StrUtil.nullToEmpty(plan.route().getTarget()),
+                "reason", StrUtil.nullToEmpty(plan.route().getReason()),
+                "confidence", plan.route().getConfidence(),
+                "intentCode", StrUtil.nullToEmpty(plan.intentCode()),
+                "intentName", StrUtil.nullToEmpty(plan.intentName()));
+    }
+
+    private String reasonSuffix(ChatRoutePlan plan) {
+        return StrUtil.isBlank(plan.route().getReason()) ? "" : "（" + plan.route().getReason() + "）";
     }
 
     /**

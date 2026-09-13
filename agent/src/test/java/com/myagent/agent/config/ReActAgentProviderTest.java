@@ -31,6 +31,7 @@ import com.myagent.rag.core.prompt.AgentPromptSlot;
 import com.myagent.rag.enums.IntentKind;
 import com.myagent.rag.service.KnowledgeSearchFacade;
 import io.agentscope.extensions.model.openai.OpenAIChatModel;
+import io.agentscope.core.tool.Toolkit;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.JsonSchema;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
@@ -43,6 +44,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -134,6 +136,18 @@ class ReActAgentProviderTest {
         assertThat(active.catalog().displayNameOf(KnowledgeSearchTool.TOOL_NAME))
                 .isEqualTo(KnowledgeSearchTool.DISPLAY_NAME);
         assertThat(active.catalog().displayNameOf("unknown_query")).isEqualTo("unknown_query");
+    }
+
+    @Test
+    void shouldBuildFixedWorkflowWithDedicatedMinimalToolkit() {
+        doReturn(new Toolkit()).when(toolCatalog).buildWorkflowToolkit("leave-approval");
+
+        var first = provider.getWorkflowAgent("leave-approval");
+        var second = provider.getWorkflowAgent("leave-approval");
+
+        assertThat(second.agent()).isSameAs(first.agent());
+        verify(toolCatalog, times(1)).buildWorkflowToolkit("leave-approval");
+        verify(toolCatalog, times(0)).buildToolkit(any(AgentToolCatalog.ResolvedCatalog.class));
     }
 
     private IntentNode mcpNode(String id, String name, String toolId) {

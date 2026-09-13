@@ -121,6 +121,7 @@ class RoutingServiceTest {
         // 即使低置信，有待确认动作也优先走 Workflow
         var r = routing.route("leave-approval", IntentKind.WORKFLOW, 0.3, true, identity("e"));
         assertEquals(RouteDecision.WORKFLOW, r.getDecision());
+        assertEquals("leave-approval", r.getTarget());
     }
 
     @Test

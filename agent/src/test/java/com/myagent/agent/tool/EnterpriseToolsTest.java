@@ -86,4 +86,14 @@ class EnterpriseToolsTest {
         assertEquals(ToolResultState.ERROR, r.getState());
         assertFalse(((TextBlock) r.getOutput().get(0)).getText().contains("secret"));
     }
+
+    @Test
+    void agentToolMustExposeRegisteredJsonSchemaInsteadOfPermissiveEmptySchema() {
+        AgentTool tool = tool("prepare_leave_request");
+
+        assertEquals("生成请假确认卡，尚未提交。缺少类型、日期或原因应先询问；用户点击卡片后才提交。", tool.getDescription());
+        assertEquals(false, tool.getParameters().get("additionalProperties"));
+        assertEquals(java.util.List.of("leaveType", "startDate", "endDate", "reason"),
+                tool.getParameters().get("required"));
+    }
 }
