@@ -64,6 +64,9 @@ public class RagTraceRunDO {
 
     private String userId;
 
+    /** 企业租户边界；所有 Trace 查询必须携带并匹配该字段。 */
+    private String tenantId;
+
     /**
      * RUNNING / SUCCESS / ERROR
      */
