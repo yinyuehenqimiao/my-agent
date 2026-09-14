@@ -8,8 +8,10 @@ import com.myagent.rag.config.RagTraceProperties;
 import com.myagent.rag.controller.vo.RagTraceDetailVO;
 import com.myagent.rag.controller.vo.RagTraceNodeVO;
 import com.myagent.rag.controller.vo.RagTraceRunVO;
+import com.myagent.rag.controller.request.RagTraceRunPageRequest;
 import com.myagent.rag.dao.entity.RagTraceNodeDO;
 import com.myagent.rag.dao.entity.RagTraceRunDO;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -19,6 +21,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Date;
 import java.util.List;
+import java.util.ArrayList;
 
 /**
  * 推理链路审计存储。运行记录持有租户边界，节点通过 trace_id 从属于运行记录。
@@ -104,6 +107,42 @@ public class RagTraceAuditService {
                          ORDER BY n.start_time,n.id
                         """, (rs, rowNum) -> toNode(rs), traceId, tenantId);
         return RagTraceDetailVO.builder().run(runs.get(0)).nodes(nodes).build();
+    }
+
+    public Page<RagTraceRunVO> page(ExecutionIdentity identity, RagTraceRunPageRequest request) {
+        String tenantId = requireTenant(identity);
+        long current = Math.max(1L, request == null ? 1L : request.getCurrent());
+        long size = Math.min(200L, Math.max(1L, request == null ? 20L : request.getSize()));
+        StringBuilder where = new StringBuilder(" WHERE tenant_id=? AND deleted=0");
+        List<Object> params = new ArrayList<>();
+        params.add(tenantId);
+        if (request != null) {
+            appendFilter(where, params, "trace_id", request.getTraceId());
+            appendFilter(where, params, "conversation_id", request.getConversationId());
+            appendFilter(where, params, "task_id", request.getTaskId());
+            appendFilter(where, params, "status", request.getStatus());
+            appendFilter(where, params, "user_id", request.getUserId());
+        }
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM t_rag_trace_run" + where,
+                Long.class, params.toArray());
+        List<Object> pageParams = new ArrayList<>(params);
+        pageParams.add(size);
+        pageParams.add((current - 1L) * size);
+        List<RagTraceRunVO> records = jdbc.query("""
+                        SELECT trace_id,trace_name,entry_method,conversation_id,task_id,user_id,status,error_message,
+                               duration_ms,start_time,end_time,extra_data
+                          FROM t_rag_trace_run
+                        """ + where + " ORDER BY start_time DESC,id DESC LIMIT ? OFFSET ?",
+                (rs, rowNum) -> toRun(rs), pageParams.toArray());
+        Page<RagTraceRunVO> page = new Page<>(current, size, total == null ? 0L : total);
+        page.setRecords(records);
+        return page;
+    }
+
+    private void appendFilter(StringBuilder where, List<Object> params, String column, String value) {
+        if (!hasText(value)) return;
+        where.append(" AND ").append(column).append("=?");
+        params.add(value);
     }
 
     private RagTraceRunVO toRun(ResultSet rs) throws SQLException {

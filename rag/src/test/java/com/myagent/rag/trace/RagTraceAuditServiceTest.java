@@ -4,6 +4,7 @@ import com.myagent.framework.context.LoginUser;
 import com.myagent.rag.config.RagTraceProperties;
 import com.myagent.rag.dao.entity.RagTraceNodeDO;
 import com.myagent.rag.dao.entity.RagTraceRunDO;
+import com.myagent.rag.controller.request.RagTraceRunPageRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -70,6 +71,28 @@ class RagTraceAuditServiceTest {
 
         assertThat(service.detail(identity("tenant-a"), "trace-2").getRun().getErrorMessage())
                 .isEqualTo("0123456789-t");
+    }
+
+    @Test
+    void pagesRunsByCurrentTenantAndSupportedFilters() {
+        service.startRun(RagTraceRunDO.builder().id("run-a").traceId("trace-a")
+                .tenantId("tenant-a").userId("employee-a").conversationId("conversation-a")
+                .status("ERROR").startTime(new Date()).extraData("{\"question\":\"年假余额\"}").build());
+        service.startRun(RagTraceRunDO.builder().id("run-b").traceId("trace-b")
+                .tenantId("tenant-b").userId("employee-b").conversationId("conversation-b")
+                .status("ERROR").startTime(new Date()).extraData("{\"question\":\"他人问题\"}").build());
+        RagTraceRunPageRequest request = new RagTraceRunPageRequest();
+        request.setCurrent(1);
+        request.setSize(20);
+        request.setStatus("ERROR");
+
+        var page = service.page(identity("tenant-a"), request);
+
+        assertThat(page.getTotal()).isEqualTo(1);
+        assertThat(page.getRecords()).singleElement().satisfies(run -> {
+            assertThat(run.getTraceId()).isEqualTo("trace-a");
+            assertThat(run.getQuestion()).isEqualTo("年假余额");
+        });
     }
 
     private LoginUser identity(String tenantId) {

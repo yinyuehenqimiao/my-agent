@@ -33,4 +33,6 @@ public class RagTraceRunPageRequest extends Page {
     private String taskId;
 
     private String status;
+
+    private String userId;
 }
