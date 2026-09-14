@@ -9,11 +9,14 @@ import com.myagent.rag.core.intent.IntentNode;
 import com.myagent.rag.core.intent.NodeScore;
 import com.myagent.rag.enums.IntentKind;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 /** 将意图分类与权限路由组合成聊天执行可直接消费的路由计划。 */
 @Service
@@ -22,12 +25,44 @@ public class ChatRoutePlanner {
 
     private final IntentClassifier intentClassifier;
     private final RoutingService routingService;
+    @Qualifier("intentClassifyExecutor")
+    private final Executor intentClassifyExecutor;
 
     /** Top1 与 Top2 小于该分差时不能凭排序先后直接执行。 */
     @Value("${myagent.routing.ambiguity.scoreGap:0.10}")
     private double ambiguityScoreGap = 0.10D;
 
     public ChatRoutePlan plan(String question, boolean hasPendingAction, ExecutionIdentity identity) {
+        return planBatch(question, hasPendingAction, identity).plan();
+    }
+
+    /**
+     * 对明确的并列问题逐个分类，并仅合并可安全共同执行的知识库查询。
+     * 异构执行路径不做隐式排序或并行执行，必须由用户明确下一步。
+     */
+    public ChatRouteBatch planBatch(String question, boolean hasPendingAction, ExecutionIdentity identity) {
+        if (hasPendingAction) {
+            return new ChatRouteBatch(planSingle(question, true, identity), List.of(question));
+        }
+        List<String> units = RouteUnitSplitter.split(question);
+        List<ChatRoutePlan> plans = units.stream()
+                .map(unit -> CompletableFuture.supplyAsync(
+                        () -> planSingle(unit, false, identity), intentClassifyExecutor))
+                .map(CompletableFuture::join)
+                .toList();
+        if (plans.size() == 1 || plans.stream().allMatch(this::isKnowledgePlan)) {
+            // 多条 KB 查询仍由一个 RAG 请求回答原句，保留上下文且避免丢失任一只读子问题。
+            return new ChatRouteBatch(plans.get(0), units);
+        }
+        return new ChatRouteBatch(new ChatRoutePlan(null, null, null, RouteResult.of(
+                RouteDecision.CLARIFY, null, "检测到多个不同业务请求，请分别说明查询或办理需求", 0D)), units);
+    }
+
+    private boolean isKnowledgePlan(ChatRoutePlan plan) {
+        return plan.route().getDecision() == RouteDecision.SYSTEM && plan.intentKind() == IntentKind.KB;
+    }
+
+    private ChatRoutePlan planSingle(String question, boolean hasPendingAction, ExecutionIdentity identity) {
         // 已生成的确认动作必须能在分类模型不可用时继续；具体目标由服务端路由配置决定。
         if (hasPendingAction) {
             RouteResult route = routingService.route(null, IntentKind.WORKFLOW, 1D, true, identity);

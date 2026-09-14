@@ -22,7 +22,7 @@ class ChatRoutePlannerTest {
 
     private final IntentClassifier classifier = mock(IntentClassifier.class);
     private final RoutingService routingService = mock(RoutingService.class);
-    private final ChatRoutePlanner planner = new ChatRoutePlanner(classifier, routingService);
+    private final ChatRoutePlanner planner = new ChatRoutePlanner(classifier, routingService, Runnable::run);
     private final LoginUser identity = LoginUser.builder().userId("u-1").username("tester").build();
 
     @Test
@@ -89,6 +89,41 @@ class ChatRoutePlannerTest {
         assertThat(plan.route().getDecision()).isEqualTo(RouteDecision.CLARIFY);
         assertThat(plan.route().getReason()).contains("候选意图类型冲突");
         verifyNoInteractions(routingService);
+    }
+
+    @Test
+    void shouldMergeMultipleKnowledgeRouteUnitsIntoOneRagPlan() {
+        when(classifier.classifyTargets("查询年假制度"))
+                .thenReturn(List.of(score("leave-policy", IntentKind.KB, 0.95)));
+        when(classifier.classifyTargets("查询远程办公制度"))
+                .thenReturn(List.of(score("remote-policy", IntentKind.KB, 0.94)));
+        when(routingService.route("leave-policy", IntentKind.KB, 0.95, false, identity))
+                .thenReturn(RouteResult.of(RouteDecision.SYSTEM, null, "知识库回答", 0.95));
+        when(routingService.route("remote-policy", IntentKind.KB, 0.94, false, identity))
+                .thenReturn(RouteResult.of(RouteDecision.SYSTEM, null, "知识库回答", 0.94));
+
+        ChatRouteBatch batch = planner.planBatch("查询年假制度，并且查询远程办公制度", false, identity);
+
+        assertThat(batch.routeUnits()).containsExactly("查询年假制度", "查询远程办公制度");
+        assertThat(batch.plan().route().getDecision()).isEqualTo(RouteDecision.SYSTEM);
+        assertThat(batch.plan().intentKind()).isEqualTo(IntentKind.KB);
+    }
+
+    @Test
+    void shouldClarifyInsteadOfUnorderedExecutionForHeterogeneousRouteUnits() {
+        when(classifier.classifyTargets("查询年假制度"))
+                .thenReturn(List.of(score("leave-policy", IntentKind.KB, 0.95)));
+        when(classifier.classifyTargets("我要申请年假"))
+                .thenReturn(List.of(score("leave-approval", IntentKind.WORKFLOW, 0.96)));
+        when(routingService.route("leave-policy", IntentKind.KB, 0.95, false, identity))
+                .thenReturn(RouteResult.of(RouteDecision.SYSTEM, null, "知识库回答", 0.95));
+        when(routingService.route("leave-approval", IntentKind.WORKFLOW, 0.96, false, identity))
+                .thenReturn(RouteResult.of(RouteDecision.WORKFLOW, "leave-approval", "高置信固定流程", 0.96));
+
+        ChatRouteBatch batch = planner.planBatch("查询年假制度；我要申请年假", false, identity);
+
+        assertThat(batch.plan().route().getDecision()).isEqualTo(RouteDecision.CLARIFY);
+        assertThat(batch.plan().route().getReason()).contains("多个不同业务请求");
     }
 
     @Test
