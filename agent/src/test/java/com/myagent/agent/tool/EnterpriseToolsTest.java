@@ -5,6 +5,7 @@ import com.myagent.agent.tool.gateway.ToolGatewayImpl;
 import com.myagent.agent.tool.gateway.ToolExecutionAuditService;
 import com.myagent.enterprise.dto.EnterpriseTypes.*;
 import com.myagent.enterprise.service.EnterpriseService;
+import com.myagent.enterprise.service.ExternalErpActionService;
 import com.myagent.framework.exception.ClientException;
 import com.myagent.framework.enterprise.EmployeeBusinessPermissions;
 import com.myagent.framework.enterprise.EmployeeProfile;
@@ -26,11 +27,12 @@ import static org.mockito.Mockito.*;
 
 class EnterpriseToolsTest {
     private final EnterpriseService service = mock(EnterpriseService.class);
+    private final ExternalErpActionService externalErpActions = mock(ExternalErpActionService.class);
     private final EnterpriseSystemPort enterpriseSystem = mock(EnterpriseSystemPort.class);
     private final PolicyDecisionService policy = mock(PolicyDecisionService.class);
     private final ToolExecutionAuditService audit = mock(ToolExecutionAuditService.class);
     private final ToolGatewayImpl gateway = new ToolGatewayImpl(policy, new ObjectMapper().findAndRegisterModules(), audit);
-    private final EnterpriseTools tools = new EnterpriseTools(service, enterpriseSystem, new ObjectMapper().findAndRegisterModules(),
+    private final EnterpriseTools tools = new EnterpriseTools(service, externalErpActions, enterpriseSystem, new ObjectMapper().findAndRegisterModules(),
             Clock.system(ZoneId.of("Asia/Shanghai")), gateway, "LOCAL");
 
     EnterpriseToolsTest() {
@@ -132,11 +134,29 @@ class EnterpriseToolsTest {
     @Test
     void httpErpModeDoesNotExposeLegacyLocalLeaveOperations() {
         ToolGatewayImpl httpGateway = new ToolGatewayImpl(policy, new ObjectMapper().findAndRegisterModules(), audit);
-        EnterpriseTools httpTools = new EnterpriseTools(service, enterpriseSystem, new ObjectMapper().findAndRegisterModules(),
+        EnterpriseTools httpTools = new EnterpriseTools(service, externalErpActions, enterpriseSystem, new ObjectMapper().findAndRegisterModules(),
                 Clock.system(ZoneId.of("Asia/Shanghai")), httpGateway, "HTTP_ERP");
         httpTools.registerTools();
 
-        assertEquals(java.util.Set.of("get_my_profile", "get_leave_balance", "get_my_tenure", "get_my_business_permissions", "list_my_leave_requests"),
+        assertEquals(java.util.Set.of("get_my_profile", "get_leave_balance", "get_my_tenure", "get_my_business_permissions", "list_my_leave_requests", "prepare_leave_request"),
                 httpTools.tools().stream().map(AgentTool::getName).collect(java.util.stream.Collectors.toSet()));
+    }
+
+    @Test
+    void httpErpPreparationCreatesOnlyExternalConfirmationCard() {
+        ToolGatewayImpl httpGateway = new ToolGatewayImpl(policy, new ObjectMapper().findAndRegisterModules(), audit);
+        EnterpriseTools httpTools = new EnterpriseTools(service, externalErpActions, enterpriseSystem, new ObjectMapper().findAndRegisterModules(),
+                Clock.system(ZoneId.of("Asia/Shanghai")), httpGateway, "HTTP_ERP");
+        httpTools.registerTools();
+        when(externalErpActions.prepareCreateLeave(any(), anyString(), anyString(), any())).thenReturn(
+                new ErpPendingAction("erp-card", "CREATE_LEAVE", "{}", "PENDING", null, LocalDateTime.now().plusMinutes(15), LocalDateTime.now()));
+
+        var result = httpTools.tools().stream().filter(item -> item.getName().equals("prepare_leave_request")).findFirst().orElseThrow()
+                .callAsync(param(Map.of("leaveType", "ANNUAL", "startDate", "2026-10-12", "endDate", "2026-10-13", "reason", "休息"))).block();
+
+        assertEquals(ToolResultState.SUCCESS, result.getState());
+        assertTrue(((TextBlock) result.getOutput().get(0)).getText().contains("erp-card"));
+        verify(externalErpActions).prepareCreateLeave(any(), eq("session"), anyString(), any());
+        verifyNoInteractions(service);
     }
 }

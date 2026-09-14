@@ -3,6 +3,8 @@ package com.myagent.agent.tool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myagent.enterprise.dto.EnterpriseTypes.*;
 import com.myagent.enterprise.service.EnterpriseService;
+import com.myagent.enterprise.service.ExternalErpActionService;
+import com.myagent.framework.enterprise.LeaveRequestCommand;
 import com.myagent.framework.context.ExecutionIdentity;
 import com.myagent.framework.context.LoginUser;
 import com.myagent.framework.enterprise.EnterpriseSystemPort;
@@ -56,16 +58,18 @@ public class EnterpriseTools {
             "prepare_approval_decision", "生成审批确认卡",
             "prepare_leave_withdrawal", "生成撤回确认卡");
     private final EnterpriseService service;
+    private final ExternalErpActionService externalErpActions;
     private final EnterpriseSystemPort enterpriseSystem;
     private final ObjectMapper json;
     private final Clock enterpriseClock;
     private final ToolGateway toolGateway;
     private final String adapterMode;
 
-    public EnterpriseTools(EnterpriseService service, EnterpriseSystemPort enterpriseSystem, ObjectMapper json,
+    public EnterpriseTools(EnterpriseService service, ExternalErpActionService externalErpActions, EnterpriseSystemPort enterpriseSystem, ObjectMapper json,
                            Clock enterpriseClock, ToolGateway toolGateway,
                            @org.springframework.beans.factory.annotation.Value("${myagent.enterprise.adapter:LOCAL}") String adapterMode) {
         this.service = service;
+        this.externalErpActions = externalErpActions;
         this.enterpriseSystem = enterpriseSystem;
         this.json = json;
         this.enterpriseClock = enterpriseClock;
@@ -87,7 +91,10 @@ public class EnterpriseTools {
                 Map.of(), List.of(), true, RiskLevel.LOW, null), this::getMyBusinessPermissions);
         toolGateway.register(def("list_my_leave_requests", "查询本人的请假申请和当前状态", Map.of(), List.of(),
                 true, RiskLevel.LOW, null), this::listMyLeaveRequests);
-        if (!isLocalAdapter()) return;
+        if (!isLocalAdapter()) {
+            registerHttpErpWriteTools();
+            return;
+        }
         toolGateway.register(def("get_leave_request_detail", "查询有权限访问的申请详情与审批时间线",
                 Map.of("requestId", prop("string", "申请ID")), List.of("requestId"),
                 true, RiskLevel.LOW, null), this::getLeaveRequestDetail);
@@ -146,6 +153,13 @@ public class EnterpriseTools {
     }
 
     private ToolResult prepareLeaveRequest(ToolInvocation inv) {
+        if (!isLocalAdapter()) {
+            ErpPendingAction action = externalErpActions.prepareCreateLeave(inv.getIdentity(), sessionOf(inv), inv.getIdempotencyKey(),
+                    LeaveRequestCommand.builder().leaveType(str(inv, "leaveType")).startDate(str(inv, "startDate"))
+                            .endDate(str(inv, "endDate")).reason(str(inv, "reason")).idempotencyKey(inv.getIdempotencyKey())
+                            .traceId(inv.getTraceId()).conversationId(sessionOf(inv)).build());
+            return ToolResult.awaiting(action, inv.getTraceId());
+        }
         Action a = service.prepareLeave(actor(inv), new LeaveInput(
                 sessionOf(inv), inv.getIdempotencyKey(),
                 str(inv, "leaveType"), LocalDate.parse(str(inv, "startDate")),
@@ -185,7 +199,7 @@ public class EnterpriseTools {
 
     private List<String> registeredNames() {
         List<String> selfService = List.of("get_my_profile", "get_leave_balance", "get_my_tenure", "get_my_business_permissions", "list_my_leave_requests");
-        if (!isLocalAdapter()) return selfService;
+        if (!isLocalAdapter()) return java.util.stream.Stream.concat(selfService.stream(), java.util.stream.Stream.of("prepare_leave_request")).toList();
         return java.util.stream.Stream.concat(selfService.stream(), java.util.stream.Stream.of(
                         "get_leave_request_detail", "list_my_approval_tasks",
                         "prepare_leave_request", "prepare_approval_decision", "prepare_leave_withdrawal"))
@@ -221,6 +235,7 @@ public class EnterpriseTools {
                 .source(source)
                 .traceId(trace)
                 .idempotencyKey(name.startsWith("prepare_") ? trace : null)
+                .conversationId(p.getRuntimeContext() == null ? null : p.getRuntimeContext().getSessionId())
                 .build();
         ToolResult result = toolGateway.invoke(inv);
         return toBlock(name, trace, result);
@@ -261,7 +276,18 @@ public class EnterpriseTools {
     }
 
     private String sessionOf(ToolInvocation inv) {
-        return "session";
+        if (inv.getConversationId() == null || inv.getConversationId().isBlank()) {
+            throw new ClientException("缺少当前会话标识");
+        }
+        return inv.getConversationId();
+    }
+
+    private void registerHttpErpWriteTools() {
+        toolGateway.register(def("prepare_leave_request", "生成请假确认卡，尚未提交到 ERP。请在核对信息后由用户确认。",
+                Map.of("leaveType", Map.of("type", "string", "enum", List.of("ANNUAL", "PERSONAL")),
+                        "startDate", prop("string", "开始日期 YYYY-MM-DD"), "endDate", prop("string", "结束日期 YYYY-MM-DD"),
+                        "reason", prop("string", "申请原因")), List.of("leaveType", "startDate", "endDate", "reason"),
+                false, RiskLevel.MEDIUM, "leave"), this::prepareLeaveRequest);
     }
 
     private Map<String, Object> prop(String type, String description) {

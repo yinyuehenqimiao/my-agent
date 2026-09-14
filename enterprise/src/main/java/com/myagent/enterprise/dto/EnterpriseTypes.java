@@ -37,4 +37,8 @@ public final class EnterpriseTypes {
     public record Policy(@NotBlank @Size(max=64) String version, @NotNull LocalDate effectiveDate) { }
     public record Workday(@JsonFormat(shape=JsonFormat.Shape.STRING) LocalDate day, boolean working, String description) { }
     public record ErpConnectionStatus(String mode, boolean configured, String summary, String nextStep) { }
+    /** HTTP ERP 写操作的本地确认卡，不代表 ERP 中已经创建业务单据。 */
+    public record ErpPendingAction(String id, String actionType, String payload, String status,
+                                   String result, @JsonFormat(shape=JsonFormat.Shape.STRING) LocalDateTime expiresAt,
+                                   @JsonFormat(shape=JsonFormat.Shape.STRING) LocalDateTime createdAt) { }
 }

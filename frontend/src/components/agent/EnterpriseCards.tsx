@@ -1,31 +1,32 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { enterprise, label, type Action, type Evidence, type LeaveRequest } from "@/services/enterpriseService";
+import { enterprise, label, type Action, type ErpPendingAction, type Evidence, type LeaveRequest } from "@/services/enterpriseService";
 
-export function ActionCard({ actionId, onChanged }: { actionId: string; onChanged?: () => void }) {
-  const [action, setAction] = useState<Action>();
+export function ActionCard({ actionId, external = false, onChanged }: { actionId: string; external?: boolean; onChanged?: () => void }) {
+  const [action, setAction] = useState<Action | ErpPendingAction>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     let alive = true;
-    enterprise.get<Action>(`/actions/${encodeURIComponent(actionId)}`).then(a => { if (alive) setAction(a); }).catch(e => { if (alive) setError(e.message); });
+    const prefix = external ? "/erp-actions" : "/actions";
+    enterprise.get<Action | ErpPendingAction>(`${prefix}/${encodeURIComponent(actionId)}`).then(a => { if (alive) setAction(a); }).catch(e => { if (alive) setError(e.message); });
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [actionId]);
+  }, [actionId, external]);
   async function execute(operation: "confirm" | "cancel") {
     setBusy(true); setError("");
-    try { setAction(await enterprise.post<Action>(`/actions/${actionId}/${operation}`)); onChanged?.(); }
+    try { setAction(await enterprise.post<Action | ErpPendingAction>(`${external ? "/erp-actions" : "/actions"}/${actionId}/${operation}`)); onChanged?.(); }
     catch (e) { setError(e instanceof Error ? e.message : "操作失败，请刷新状态"); }
     finally { setBusy(false); }
   }
   if (!action) return <div className="enterprise-card">{error || "加载确认信息…"}</div>;
   let summary: Partial<LeaveRequest> = {}; let comment = "";
-  try { const p = JSON.parse(action.payload); summary = p.summary || {}; comment = p.comment || ""; } catch { /* server remains authority */ }
+  try { const p = JSON.parse(action.payload); summary = p.summary || p; comment = p.comment || ""; } catch { /* server remains authority */ }
   const expired = now >= new Date(action.expiresAt + "+08:00").getTime();
   return <section className="enterprise-card" aria-label="业务确认卡">
-    <div className="flex items-center justify-between gap-3"><strong>{label(action.kind)}</strong><span>{label(action.status)}</span></div>
-    <p className="mt-3">{label(summary.leaveType || "")} · {summary.startDate} 至 {summary.endDate} · {summary.days} 个工作日</p>
+    <div className="flex items-center justify-between gap-3"><strong>{label(external ? (action as ErpPendingAction).actionType : (action as Action).kind)}</strong><span>{label(action.status)}</span></div>
+    <p className="mt-3">{label(summary.leaveType || "")} · {summary.startDate} 至 {summary.endDate}{summary.days ? ` · ${summary.days} 个工作日` : ""}</p>
     <p className="mt-1 whitespace-pre-wrap">{summary.reason}</p>
     {comment && <p className="mt-2">审批意见：{comment}</p>}
     <p className="mt-2 text-xs opacity-60">主管：{summary.managerId} → 人事：{summary.hrId}</p>
@@ -33,9 +34,9 @@ export function ActionCard({ actionId, onChanged }: { actionId: string; onChange
       <p className="mt-3 text-sm">{expired ? "确认已过期，请重新生成。" : "尚未办理，请核对后确认。修改内容需取消后重新生成。"}</p>
       <div className="mt-3 flex gap-3"><button className="enterprise-primary" disabled={busy || expired} onClick={() => execute("confirm")}>{busy ? "处理中…" : "确认执行"}</button><button className="enterprise-secondary" disabled={busy} onClick={() => execute("cancel")}>取消</button></div>
     </>}
-    {action.status === "DONE" && <p className="mt-3 text-emerald-600">操作已完成，可在申请详情查看最新进度。</p>}
+    {action.status === "DONE" && <p className="mt-3 text-emerald-600">操作已完成，ERP 已返回受理结果。</p>}
     {error && <p role="alert" className="mt-2 text-red-600">{error}</p>}
-    <Link className="mt-3 inline-block underline" to={`/enterprise?request=${action.requestId}`}>查看申请与进度</Link>
+    {!external && <Link className="mt-3 inline-block underline" to={`/enterprise?request=${(action as Action).requestId}`}>查看申请与进度</Link>}
   </section>;
 }
 
@@ -55,9 +56,9 @@ function SourceCard({ source }: { source: Evidence }) {
 }
 
 export function EnterpriseToolResult({ raw }: { raw: string }) {
-  let result: { status?: string; data?: Action; sources?: Evidence[] };
+  let result: { status?: string; data?: Action | ErpPendingAction; sources?: Evidence[] };
   try { result = JSON.parse(raw); } catch { return null; }
-  if (result.status === "AWAITING_CONFIRMATION" && result.data?.id) return <ActionCard actionId={result.data.id} />;
+  if (result.status === "AWAITING_CONFIRMATION" && result.data?.id) return <ActionCard actionId={result.data.id} external={"actionType" in result.data} />;
   if (Array.isArray(result.sources)) return <div className="mt-3 space-y-3">{result.sources.map(s => <SourceCard key={`${s.docId}:${s.chunkId}`} source={s} />)}</div>;
   return null;
 }

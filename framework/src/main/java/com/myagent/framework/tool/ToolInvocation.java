@@ -27,4 +27,6 @@ public class ToolInvocation {
     private String traceId;
     /** 幂等键（写工具必填） */
     private String idempotencyKey;
+    /** 服务端会话标识；用于将确认卡限定在当前会话，模型不能覆写。 */
+    private String conversationId;
 }

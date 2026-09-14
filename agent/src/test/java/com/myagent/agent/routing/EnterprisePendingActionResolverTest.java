@@ -2,6 +2,7 @@ package com.myagent.agent.routing;
 
 import com.myagent.enterprise.dto.EnterpriseTypes.Action;
 import com.myagent.enterprise.service.EnterpriseService;
+import com.myagent.enterprise.service.ExternalErpActionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -16,7 +17,8 @@ import static org.mockito.Mockito.when;
 class EnterprisePendingActionResolverTest {
 
     private final EnterpriseService enterpriseService = mock(EnterpriseService.class);
-    private final EnterprisePendingActionResolver resolver = new EnterprisePendingActionResolver(enterpriseService);
+    private final ExternalErpActionService externalErpActions = mock(ExternalErpActionService.class);
+    private final EnterprisePendingActionResolver resolver = new EnterprisePendingActionResolver(enterpriseService, externalErpActions);
 
     @Test
     void shouldUseOnlyCurrentUsersCurrentConversationPendingActions() {
