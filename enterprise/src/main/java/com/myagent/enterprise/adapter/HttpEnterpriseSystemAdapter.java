@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myagent.framework.exception.ClientException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
@@ -37,6 +38,7 @@ public class HttpEnterpriseSystemAdapter implements EnterpriseSystemPort {
     private final java.net.http.HttpClient client;
     private final ObjectMapper mapper = new ObjectMapper();
 
+    @Autowired
     public HttpEnterpriseSystemAdapter(@Value("${myagent.enterprise.erp.base-url:}") String baseUrl,
                                        @Value("${myagent.enterprise.erp.service-token:}") String serviceToken,
                                        @Value("${myagent.enterprise.erp.timeout-ms:3000}") int timeoutMs) {

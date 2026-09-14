@@ -7,6 +7,8 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.test.context.support.TestPropertySourceUtils;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -89,5 +91,19 @@ class HttpEnterpriseSystemAdapterTest {
         var command = LeaveRequestCommand.builder().leaveType("ANNUAL").startDate("2026-09-14").endDate("2026-09-15")
                 .reason("年假").idempotencyKey("idempotent-1").traceId("trace-write-1").build();
         assertThat(adapter.createLeaveRequest(identity, command).requestId()).isEqualTo("leave-1");
+    }
+
+    /** 运行时回归：HTTP_ERP 模式必须可由 Spring 选择生产构造器，而非要求不存在的无参构造器。 */
+    @Test void springCanConstructHttpAdapterInHttpErpMode() {
+        try (var context = new AnnotationConfigApplicationContext()) {
+            TestPropertySourceUtils.addInlinedPropertiesToEnvironment(context,
+                    "myagent.enterprise.adapter=HTTP_ERP",
+                    "myagent.enterprise.erp.base-url=http://127.0.0.1:18081",
+                    "myagent.enterprise.erp.service-token=test-token");
+            context.register(HttpEnterpriseSystemAdapter.class);
+            context.refresh();
+
+            assertThat(context.getBean(HttpEnterpriseSystemAdapter.class)).isNotNull();
+        }
     }
 }
