@@ -34,6 +34,8 @@ import com.myagent.framework.routing.RouteResult;
 import com.myagent.framework.web.StreamTaskManager;
 import com.myagent.rag.enums.IntentKind;
 import com.myagent.rag.service.KnowledgeSearchFacade;
+import com.myagent.rag.dao.entity.RagTraceRunDO;
+import com.myagent.rag.trace.RagTraceAuditService;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import org.junit.jupiter.api.AfterEach;
@@ -53,6 +55,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
@@ -76,6 +79,7 @@ class AgentChatServiceImplTest {
     private ChatRoutePlanner routePlanner;
     private KnowledgeSearchFacade knowledgeSearchFacade;
     private EnterprisePendingActionResolver pendingActionResolver;
+    private RagTraceAuditService traceAuditService;
     private AtomicInteger gateReleased;
     private ReActAgent agent;
     private AgentChatServiceImpl service;
@@ -89,9 +93,11 @@ class AgentChatServiceImplTest {
         routePlanner = mock(ChatRoutePlanner.class);
         knowledgeSearchFacade = mock(KnowledgeSearchFacade.class);
         pendingActionResolver = mock(EnterprisePendingActionResolver.class);
+        traceAuditService = mock(RagTraceAuditService.class);
         agent = mock(ReActAgent.class);
         service = new AgentChatServiceImpl(agentProvider, conversationService, taskManager, runGate,
-                routePlanner, knowledgeSearchFacade, pendingActionResolver, new ObjectMapper().findAndRegisterModules());
+                routePlanner, knowledgeSearchFacade, pendingActionResolver, new ObjectMapper().findAndRegisterModules(),
+                traceAuditService);
 
         gateReleased = new AtomicInteger();
         when(runGate.acquire(anyString(), anyString(), anyString())).thenReturn(gateReleased::incrementAndGet);
@@ -276,6 +282,49 @@ class AgentChatServiceImplTest {
 
         // 正常完成也会触发 completion 回调，这里再取消等于每个请求都往 Redis 写一条 30 分钟死标记
         verify(taskManager, never()).cancel(anyString());
+    }
+
+    @Test
+    void shouldPersistSuccessfulAgentRequestAsOneTraceRun() {
+        when(agent.streamEvents(anyString(), any(RuntimeContext.class))).thenReturn(Flux.empty());
+
+        service.streamChat("查询我的年假", CONVERSATION_ID, new SseEmitter());
+
+        ArgumentCaptor<RagTraceRunDO> run = ArgumentCaptor.forClass(RagTraceRunDO.class);
+        verify(traceAuditService).startRun(run.capture());
+        assertThat(run.getValue().getTenantId()).isEqualTo("default");
+        assertThat(run.getValue().getConversationId()).isEqualTo(CONVERSATION_ID);
+        assertThat(run.getValue().getExtraData()).contains("查询我的年假");
+        verify(traceAuditService).finishRun(eq(run.getValue().getTraceId()), eq("SUCCESS"),
+                org.mockito.ArgumentMatchers.isNull(), any(), anyLong());
+    }
+
+    @Test
+    void shouldFinishTraceAsErrorWhenAgentStreamFails() {
+        when(agent.streamEvents(anyString(), any(RuntimeContext.class)))
+                .thenReturn(Flux.error(new IllegalStateException("模型流失败")));
+
+        service.streamChat("查询我的年假", CONVERSATION_ID, new SseEmitter());
+
+        ArgumentCaptor<RagTraceRunDO> run = ArgumentCaptor.forClass(RagTraceRunDO.class);
+        verify(traceAuditService).startRun(run.capture());
+        verify(traceAuditService).finishRun(eq(run.getValue().getTraceId()), eq("ERROR"),
+                contains("模型流失败"), any(), anyLong());
+    }
+
+    @Test
+    void shouldFinishTraceAsCancelledWhenTaskIsCancelled() {
+        when(agent.streamEvents(anyString(), any(RuntimeContext.class))).thenReturn(Flux.never());
+        ArgumentCaptor<Runnable> finalizer = ArgumentCaptor.forClass(Runnable.class);
+
+        service.streamChat("查询我的年假", CONVERSATION_ID, new SseEmitter());
+        verify(taskManager).register(anyString(), anyString(), finalizer.capture());
+        finalizer.getValue().run();
+
+        ArgumentCaptor<RagTraceRunDO> run = ArgumentCaptor.forClass(RagTraceRunDO.class);
+        verify(traceAuditService).startRun(run.capture());
+        verify(traceAuditService).finishRun(eq(run.getValue().getTraceId()), eq("CANCELLED"),
+                org.mockito.ArgumentMatchers.isNull(), any(), anyLong());
     }
 
     @Test

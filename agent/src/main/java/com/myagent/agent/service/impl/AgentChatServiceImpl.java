@@ -41,10 +41,13 @@ import com.myagent.agent.service.handler.AgentStreamEventBridge;
 import com.myagent.framework.context.UserContext;
 import com.myagent.framework.context.LoginUser;
 import com.myagent.framework.routing.RouteDecision;
+import com.myagent.framework.trace.RagTraceContext;
 import com.myagent.framework.web.SseEmitterSender;
 import com.myagent.framework.web.StreamTaskManager;
+import com.myagent.rag.dao.entity.RagTraceRunDO;
 import com.myagent.rag.enums.IntentKind;
 import com.myagent.rag.service.KnowledgeSearchFacade;
+import com.myagent.rag.trace.RagTraceAuditService;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.event.AgentEvent;
@@ -60,6 +63,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -82,6 +86,7 @@ public class AgentChatServiceImpl implements AgentChatService {
     private final KnowledgeSearchFacade knowledgeSearchFacade;
     private final EnterprisePendingActionResolver pendingActionResolver;
     private final ObjectMapper objectMapper;
+    private final RagTraceAuditService traceAuditService;
 
     @Override
     public void streamChat(String question, String conversationId, SseEmitter emitter) {
@@ -110,6 +115,23 @@ public class AgentChatServiceImpl implements AgentChatService {
 
     private void startRun(String question, LoginUser identity, String conversationId, String taskId,
                           SseEmitter emitter, Runnable releaseGate) {
+        TraceRun trace = beginTrace(question, identity, conversationId, taskId);
+        if (trace.started()) {
+            RagTraceContext.setTraceId(trace.traceId());
+            RagTraceContext.setTaskId(taskId);
+        }
+        try {
+            startTracedRun(question, identity, conversationId, taskId, emitter, releaseGate, trace);
+        } catch (RuntimeException | Error error) {
+            finishTrace(trace, "ERROR", error);
+            throw error;
+        } finally {
+            RagTraceContext.clear();
+        }
+    }
+
+    private void startTracedRun(String question, LoginUser identity, String conversationId, String taskId,
+                                SseEmitter emitter, Runnable releaseGate, TraceRun trace) {
         String userId = identity.getUserId();
         SseEmitterSender sender = new SseEmitterSender(emitter);
         sender.sendEvent(AgentSSEEventType.META.value(), new AgentMetaPayload(conversationId, taskId));
@@ -123,6 +145,11 @@ public class AgentChatServiceImpl implements AgentChatService {
 
         AgentRunHandle runHandle = new AgentRunHandle(taskId, sender, taskManager);
         runHandle.onRelease(releaseGate);
+        runHandle.onSettlement((settlement, error) -> finishTrace(trace, switch (settlement) {
+            case SUCCESS -> "SUCCESS";
+            case CANCELLED -> "CANCELLED";
+            case ERROR -> "ERROR";
+        }, error));
         // 记忆常驻内存是确定性泄漏，流一结束就驱逐：三条收尾路都会执行，换来内存上界
         // 状态已在框架侧随本轮落库（正常完成与打断各自 save 后才发终答），下一轮从 PG 读回，代价是一次反序列化
         runHandle.onRelease(() -> agentProvider.evictStateCache(userId, conversationId));
@@ -162,6 +189,52 @@ public class AgentChatServiceImpl implements AgentChatService {
         }
         startAgentRun(question, userId, conversationId, taskId, title, questionMessageId,
                 runHandle, activeAgent);
+    }
+
+    private TraceRun beginTrace(String question, LoginUser identity, String conversationId, String taskId) {
+        String traceId = IdUtil.getSnowflakeNextIdStr();
+        long startMillis = System.currentTimeMillis();
+        try {
+            traceAuditService.startRun(RagTraceRunDO.builder()
+                    .id(IdUtil.getSnowflakeNextIdStr())
+                    .traceId(traceId)
+                    .traceName("agent-chat")
+                    .entryMethod("AgentChatService#streamChat")
+                    .conversationId(conversationId)
+                    .taskId(taskId)
+                    .userId(identity.getUserId())
+                    .tenantId(StrUtil.blankToDefault(identity.getTenantId(), "default"))
+                    .status("RUNNING")
+                    .startTime(new Date(startMillis))
+                    .extraData(cn.hutool.json.JSONUtil.createObj()
+                            .set("questionLength", StrUtil.length(question))
+                            .set("question", question)
+                            .toString())
+                    .build());
+            return new TraceRun(traceId, startMillis, true);
+        } catch (Exception error) {
+            log.warn("推理 Trace 启动失败，继续执行对话, taskId: {}", taskId, error);
+            return new TraceRun(traceId, startMillis, false);
+        }
+    }
+
+    private void finishTrace(TraceRun trace, String status, Throwable error) {
+        if (!trace.started() || !trace.finished().compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            String message = error == null ? null : error.getClass().getSimpleName() + ": " + StrUtil.nullToEmpty(error.getMessage());
+            traceAuditService.finishRun(trace.traceId(), status, message, new Date(),
+                    System.currentTimeMillis() - trace.startMillis());
+        } catch (Exception auditError) {
+            log.warn("推理 Trace 收尾失败，traceId: {}", trace.traceId(), auditError);
+        }
+    }
+
+    private record TraceRun(String traceId, long startMillis, boolean started, AtomicBoolean finished) {
+        private TraceRun(String traceId, long startMillis, boolean started) {
+            this(traceId, startMillis, started, new AtomicBoolean(false));
+        }
     }
 
     private void startAgentRun(String question, String userId, String conversationId, String taskId,

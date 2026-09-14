@@ -151,7 +151,7 @@ public class AgentStreamEventBridge {
         if (runHandle.isCancelled()) {
             return;
         }
-        runHandle.complete(() -> {
+        runHandle.completeError(throwable, () -> {
             log.error("Agent 流式会话异常, taskId: {}", runHandle.getTaskId(), throwable);
             sender.sendEvent(AgentSSEEventType.ERROR.value(), java.util.Map.of("error", clientErrorMessage(throwable)));
             sender.sendEvent(AgentSSEEventType.DONE.value(), "[DONE]");

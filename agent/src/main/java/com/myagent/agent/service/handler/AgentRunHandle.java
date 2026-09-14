@@ -26,6 +26,7 @@ import reactor.core.Disposable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
 
 /**
  * 一次 Agent 运行的生命周期句柄：持 taskId、SSE 通道、上游订阅与释放钩子
@@ -55,6 +56,9 @@ public class AgentRunHandle {
 
     private volatile Disposable disposable;
     private volatile Runnable interruptAction;
+    private volatile BiConsumer<Settlement, Throwable> settlementObserver;
+
+    public enum Settlement { SUCCESS, CANCELLED, ERROR }
 
     public AgentRunHandle(String taskId, SseEmitterSender sender, StreamTaskManager taskManager) {
         this.taskId = taskId;
@@ -87,6 +91,11 @@ public class AgentRunHandle {
         runReleaseHook(hook);
     }
 
+    /** 注册一次运行终态观察器，供 Trace 等基础设施准确区分成功、取消与错误。 */
+    public void onSettlement(BiConsumer<Settlement, Throwable> observer) {
+        this.settlementObserver = observer;
+    }
+
     /**
      * 断开上游：取消协议里先于收尾体执行
      */
@@ -113,20 +122,27 @@ public class AgentRunHandle {
     }
 
     public void complete(Runnable body) {
-        if (settle(body)) {
+        if (settle(Settlement.SUCCESS, null, body)) {
             sender.complete();
         }
     }
 
     public void cancel(Runnable body) {
-        if (settle(body)) {
+        if (settle(Settlement.CANCELLED, null, body)) {
             sender.complete();
         }
     }
 
     public void fail(Throwable error, Runnable body) {
-        if (settle(body)) {
+        if (settle(Settlement.ERROR, error, body)) {
             sender.fail(error);
+        }
+    }
+
+    /** 已通过 SSE 发送业务错误与 DONE 时使用：审计记 ERROR，但通道保持原有正常关闭协议。 */
+    public void completeError(Throwable error, Runnable body) {
+        if (settle(Settlement.ERROR, error, body)) {
+            sender.complete();
         }
     }
 
@@ -134,7 +150,7 @@ public class AgentRunHandle {
      * 收尾体只跑一次；无论其成败都要注销任务并释放资源，否则异常路径会漏掉闸门
      * 收尾体的异常就地咽下：结算旗标已让超时守卫失效，异常再往上抛就没人关通道，SSE 会一直挂到超时
      */
-    private boolean settle(Runnable body) {
+    private boolean settle(Settlement settlement, Throwable error, Runnable body) {
         if (!settled.compareAndSet(false, true)) {
             return false;
         }
@@ -143,10 +159,21 @@ public class AgentRunHandle {
         } catch (Exception e) {
             log.error("Agent 运行收尾处理失败, taskId: {}", taskId, e);
         } finally {
+            notifySettlement(settlement, error);
             taskManager.unregister(taskId);
             runReleaseHooks();
         }
         return true;
+    }
+
+    private void notifySettlement(Settlement settlement, Throwable error) {
+        BiConsumer<Settlement, Throwable> observer = settlementObserver;
+        if (observer == null) return;
+        try {
+            observer.accept(settlement, error);
+        } catch (Exception observerError) {
+            log.error("Agent 运行终态观察器失败, taskId: {}", taskId, observerError);
+        }
     }
 
     private void runReleaseHooks() {
