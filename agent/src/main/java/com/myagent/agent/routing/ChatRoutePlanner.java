@@ -3,6 +3,7 @@ package com.myagent.agent.routing;
 import com.myagent.framework.context.ExecutionIdentity;
 import com.myagent.framework.routing.RouteDecision;
 import com.myagent.framework.routing.RouteResult;
+import com.myagent.framework.trace.RagTraceNode;
 import com.myagent.rag.core.intent.IntentClassifier;
 import com.myagent.rag.core.intent.IntentClassificationException;
 import com.myagent.rag.core.intent.IntentNode;
@@ -32,6 +33,7 @@ public class ChatRoutePlanner {
     @Value("${myagent.routing.ambiguity.scoreGap:0.10}")
     private double ambiguityScoreGap = 0.10D;
 
+    @RagTraceNode(name = "chat-route-plan", type = "ROUTING")
     public ChatRoutePlan plan(String question, boolean hasPendingAction, ExecutionIdentity identity) {
         return planBatch(question, hasPendingAction, identity).plan();
     }

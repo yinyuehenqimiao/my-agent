@@ -31,6 +31,7 @@ import com.myagent.rag.dao.entity.IntentNodeDO;
 import com.myagent.rag.dao.mapper.IntentNodeMapper;
 import com.myagent.framework.convention.ChatMessage;
 import com.myagent.framework.convention.ChatRequest;
+import com.myagent.framework.trace.RagTraceNode;
 import com.myagent.infra.chat.LLMService;
 import com.myagent.rag.core.prompt.PromptTemplateLoader;
 import lombok.RequiredArgsConstructor;
@@ -144,6 +145,7 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
      * - 返回结果已按 score 从高到低排序
      */
     @Override
+    @RagTraceNode(name = "intent-classify", type = "INTENT")
     public List<NodeScore> classifyTargets(String question) {
         // 每次都从Redis读取最新数据
         IntentTreeData data = loadIntentTreeData();

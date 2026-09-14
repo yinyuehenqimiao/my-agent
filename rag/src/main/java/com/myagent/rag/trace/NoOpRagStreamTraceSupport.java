@@ -18,12 +18,10 @@
 package com.myagent.rag.trace;
 
 import com.myagent.framework.trace.RagStreamTraceSupport;
-import org.springframework.stereotype.Component;
 
 /**
  * RAG trace 未接入前的占位实现，保证 LLM 客户端可正常装配
  */
-@Component
 public class NoOpRagStreamTraceSupport implements RagStreamTraceSupport {
 
     @Override

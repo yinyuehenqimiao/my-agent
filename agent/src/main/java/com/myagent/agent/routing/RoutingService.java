@@ -3,6 +3,7 @@ package com.myagent.agent.routing;
 import com.myagent.framework.context.ExecutionIdentity;
 import com.myagent.framework.routing.RouteDecision;
 import com.myagent.framework.routing.RouteResult;
+import com.myagent.framework.trace.RagTraceNode;
 import com.myagent.rag.enums.IntentKind;
 import com.myagent.system.auth.service.PolicyDecisionService;
 import lombok.RequiredArgsConstructor;
@@ -58,6 +59,7 @@ public class RoutingService {
      * @param hasPendingAction  是否有待确认/审批动作（优先走 Workflow）
      * @param identity         执行身份（用于授权判断）
      */
+    @RagTraceNode(name = "routing-decision", type = "ROUTING_DECISION")
     public RouteResult route(String intentCode, IntentKind kind, double confidence,
                              boolean hasPendingAction, ExecutionIdentity identity) {
         // 1. 待确认/审批优先走 Workflow（继续已有流程）
