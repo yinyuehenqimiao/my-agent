@@ -163,19 +163,31 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
                 .thinking(false)
                 .build();
 
-        // 标准档调用；调用失败或 JSON 非法均返回空意图（下游把空意图当作"无意图"兜底）
-        String raw;
-        try {
-            raw = llmService.chat(request);
-        } catch (Exception e) {
-            log.warn("意图识别 LLM 调用失败，返回空意图", e);
-            return List.of();
+        // 服务不可用不等于模型未识别到业务意图：前者必须由调用方明确降级，禁止当作空意图继续路由。
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            String raw;
+            try {
+                raw = llmService.chat(request);
+            } catch (Exception e) {
+                log.warn("意图识别 LLM 调用失败", e);
+                throw new IntentClassificationException("意图分类服务不可用", e);
+            }
+            try {
+                return parseScores(raw, data, question);
+            } catch (IntentClassificationException e) {
+                if (attempt == 1) {
+                    log.warn("意图识别响应无效，正在重试一次", e);
+                    continue;
+                }
+                throw new IntentClassificationException("意图分类响应无效，重试后仍失败", e);
+            }
         }
-        return parseScores(raw, data, question);
+        throw new IntentClassificationException("意图分类响应无效");
     }
 
     /**
-     * 解析意图打分，按 score 降序返回；任何解析失败/畸形均返回空列表
+     * 解析意图打分，按 score 降序返回。
+     * <p>合法但无可用候选项时返回空列表；JSON 或置信度契约错误则抛出异常，以便调用方重试。
      */
     private List<NodeScore> parseScores(String raw, IntentTreeData data, String question) {
         try {
@@ -189,8 +201,7 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
                 // 容错：如果模型外面又包了一层 { "results": [...] }
                 arr = root.getAsJsonObject().getAsJsonArray("results");
             } else {
-                log.warn("LLM 返回了非预期的 JSON 格式, 原始响应: {}", LogSafe.preview(raw));
-                return List.of();
+                throw new IntentClassificationException("LLM 返回了非预期的 JSON 格式");
             }
 
             List<NodeScore> scores = new ArrayList<>();
@@ -209,8 +220,7 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
 
                 double score = obj.get("score").getAsDouble();
                 if (!Double.isFinite(score) || score < 0D || score > 1D) {
-                    log.warn("LLM 返回了越界的意图置信度, id: {}, score: {}，已跳过", id, score);
-                    continue;
+                    throw new IntentClassificationException("LLM 返回了越界的意图置信度: " + id);
                 }
                 scores.add(new NodeScore(node, score));
             }
@@ -228,9 +238,12 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
                     )
             );
             return scores;
+        } catch (IntentClassificationException e) {
+            log.warn("意图打分响应无效, 原始响应: {}", LogSafe.preview(raw), e);
+            throw e;
         } catch (Exception e) {
             log.warn("意图打分解析失败, 原始响应: {}", LogSafe.preview(raw), e);
-            return List.of();
+            throw new IntentClassificationException("意图打分响应无法解析", e);
         }
     }
 

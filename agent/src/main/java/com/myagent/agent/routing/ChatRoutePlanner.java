@@ -4,6 +4,7 @@ import com.myagent.framework.context.ExecutionIdentity;
 import com.myagent.framework.routing.RouteDecision;
 import com.myagent.framework.routing.RouteResult;
 import com.myagent.rag.core.intent.IntentClassifier;
+import com.myagent.rag.core.intent.IntentClassificationException;
 import com.myagent.rag.core.intent.IntentNode;
 import com.myagent.rag.core.intent.NodeScore;
 import com.myagent.rag.enums.IntentKind;
@@ -27,7 +28,13 @@ public class ChatRoutePlanner {
             RouteResult route = routingService.route(null, IntentKind.WORKFLOW, 1D, true, identity);
             return new ChatRoutePlan(null, "待确认业务", IntentKind.WORKFLOW, route);
         }
-        List<NodeScore> candidates = intentClassifier.classifyTargets(question);
+        List<NodeScore> candidates;
+        try {
+            candidates = intentClassifier.classifyTargets(question);
+        } catch (IntentClassificationException e) {
+            return new ChatRoutePlan(null, null, null, RouteResult.of(
+                    RouteDecision.CLARIFY, null, "暂时无法识别，请稍后重试", 0D));
+        }
         NodeScore best = candidates == null ? null : candidates.stream()
                 .filter(candidate -> candidate != null && candidate.getNode() != null)
                 .max(Comparator.comparingDouble(NodeScore::getScore))

@@ -4,6 +4,7 @@ import com.myagent.framework.context.LoginUser;
 import com.myagent.framework.routing.RouteDecision;
 import com.myagent.framework.routing.RouteResult;
 import com.myagent.rag.core.intent.IntentClassifier;
+import com.myagent.rag.core.intent.IntentClassificationException;
 import com.myagent.rag.core.intent.IntentNode;
 import com.myagent.rag.core.intent.NodeScore;
 import com.myagent.rag.enums.IntentKind;
@@ -48,6 +49,18 @@ class ChatRoutePlannerTest {
 
         assertThat(plan.route().getDecision()).isEqualTo(RouteDecision.CLARIFY);
         assertThat(plan.route().getReason()).contains("未识别到明确意图");
+    }
+
+    @Test
+    void shouldReportClassifierServiceFailureInsteadOfTreatingItAsSemanticAmbiguity() {
+        when(classifier.classifyTargets("查询我的年假"))
+                .thenThrow(new IntentClassificationException("意图分类服务不可用"));
+
+        ChatRoutePlan plan = planner.plan("查询我的年假", false, identity);
+
+        assertThat(plan.route().getDecision()).isEqualTo(RouteDecision.CLARIFY);
+        assertThat(plan.route().getReason()).contains("暂时无法识别，请稍后重试");
+        verifyNoInteractions(routingService);
     }
 
     @Test
