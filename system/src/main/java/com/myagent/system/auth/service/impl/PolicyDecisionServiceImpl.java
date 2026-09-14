@@ -2,6 +2,7 @@ package com.myagent.system.auth.service.impl;
 
 import com.myagent.framework.context.ExecutionIdentity;
 import com.myagent.framework.exception.ClientException;
+import com.myagent.framework.trace.RagTraceContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -110,13 +111,16 @@ public class PolicyDecisionServiceImpl implements com.myagent.system.auth.servic
     /** 记录权限拒绝到审计表；记录失败不影响主流程 */
     private void auditDeny(ExecutionIdentity identity, String permCode, String reason) {
         try {
+            String currentTraceId = RagTraceContext.getTraceId();
+            String traceId = currentTraceId == null || currentTraceId.isBlank()
+                    ? UUID.randomUUID().toString() : currentTraceId;
             jdbc.update(
                     "INSERT INTO sys_auth_audit(user_id,username,tenant_id,perm_code,action,reason,trace_id) "
                             + "VALUES(?,?,?,?,?,?,?)",
                     identity == null ? null : identity.getUserId(),
                     identity == null ? null : identity.getUsername(),
                     identity == null ? "default" : identity.getTenantId(),
-                    permCode, "DENY", reason, UUID.randomUUID().toString());
+                    permCode, "DENY", reason, traceId);
         } catch (Exception e) {
             long failures = auditWriteFailures.incrementAndGet();
             log.error("security_audit_write_failure count={} permCode={} error={}",

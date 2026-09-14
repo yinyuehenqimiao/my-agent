@@ -15,6 +15,7 @@ import com.myagent.framework.tool.ToolDefinition.Source;
 import com.myagent.framework.tool.ToolGateway;
 import com.myagent.framework.tool.ToolInvocation;
 import com.myagent.framework.tool.ToolResult;
+import com.myagent.framework.trace.RagTraceContext;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.message.ToolResultBlock;
@@ -219,26 +220,31 @@ public class EnterpriseTools {
             @Override public Map<String, Object> getParameters() { return definition.getInputSchema(); }
             @Override public boolean isReadOnly() { return definition.isReadOnly(); }
             @Override public Mono<ToolResultBlock> callAsync(ToolCallParam p) {
-                return Mono.fromCallable(() -> invokeViaGateway(name, source, p)).subscribeOn(Schedulers.boundedElastic());
+                // 在切换 Reactor 调度线程前捕获请求级 trace，避免异步线程池丢失审计上下文。
+                String requestTraceId = RagTraceContext.getTraceId();
+                return Mono.fromCallable(() -> invokeViaGateway(name, source, p, requestTraceId))
+                        .subscribeOn(Schedulers.boundedElastic());
             }
         };
     }
 
-    private ToolResultBlock invokeViaGateway(String name, Source source, ToolCallParam p) throws Exception {
-        String trace = p.getToolUseBlock() != null && p.getToolUseBlock().getId() != null
+    private ToolResultBlock invokeViaGateway(String name, Source source, ToolCallParam p,
+                                             String requestTraceId) throws Exception {
+        String callId = p.getToolUseBlock() != null && p.getToolUseBlock().getId() != null
                 ? p.getToolUseBlock().getId() : UUID.randomUUID().toString();
+        String traceId = requestTraceId == null || requestTraceId.isBlank() ? callId : requestTraceId;
         ExecutionIdentity identity = identityFrom(p);
         ToolInvocation inv = ToolInvocation.builder()
                 .toolName(name)
                 .input(p.getInput() == null ? Map.of() : p.getInput())
                 .identity(identity)
                 .source(source)
-                .traceId(trace)
-                .idempotencyKey(name.startsWith("prepare_") ? trace : null)
+                .traceId(traceId)
+                .idempotencyKey(name.startsWith("prepare_") ? callId : null)
                 .conversationId(p.getRuntimeContext() == null ? null : p.getRuntimeContext().getSessionId())
                 .build();
         ToolResult result = toolGateway.invoke(inv);
-        return toBlock(name, trace, result);
+        return toBlock(name, callId, traceId, result);
     }
 
     /** 从 RuntimeContext 取服务端签发身份；缺失则返回 null（网关 fail-closed） */
@@ -248,14 +254,14 @@ public class EnterpriseTools {
         return LoginUser.builder().userId(rc.getUserId()).username(rc.getUserId()).build();
     }
 
-    private ToolResultBlock toBlock(String name, String trace, ToolResult result) throws Exception {
+    private ToolResultBlock toBlock(String name, String callId, String traceId, ToolResult result) throws Exception {
         Object payload = result.getOutput() == null
                 ? Map.of("status", result.getState().name(), "errorCode", result.getErrorCode() == null ? "" : result.getErrorCode(),
-                        "message", result.getMessage() == null ? "" : result.getMessage(), "traceId", trace)
+                        "message", result.getMessage() == null ? "" : result.getMessage(), "traceId", traceId)
                 : Map.of("status", result.getState().name(), "data", result.getOutput(),
-                        "errorCode", result.getErrorCode() == null ? "" : result.getErrorCode(), "traceId", trace);
+                        "errorCode", result.getErrorCode() == null ? "" : result.getErrorCode(), "traceId", traceId);
         boolean error = result.getState() != ToolResult.State.SUCCESS && result.getState() != ToolResult.State.AWAITING_CONFIRMATION;
-        return ToolResultBlock.builder().id(trace).name(name)
+        return ToolResultBlock.builder().id(callId).name(name)
                 .output(TextBlock.builder().text(json.writeValueAsString(payload)).build())
                 .state(error ? ToolResultState.ERROR : ToolResultState.SUCCESS).build();
     }

@@ -3,6 +3,7 @@ package com.myagent.system.auth;
 import com.myagent.framework.context.LoginUser;
 import com.myagent.framework.context.UserContext;
 import com.myagent.framework.exception.ClientException;
+import com.myagent.framework.trace.RagTraceContext;
 import com.myagent.system.auth.service.PolicyDecisionService;
 import com.myagent.system.auth.service.impl.PolicyDecisionServiceImpl;
 import org.junit.jupiter.api.*;
@@ -89,7 +90,10 @@ class PolicyDecisionServiceTest {
         // noRoleUser 不分配任何角色
     }
 
-    @AfterEach void cleanup() { UserContext.clear(); }
+    @AfterEach void cleanup() {
+        UserContext.clear();
+        RagTraceContext.clear();
+    }
 
     private LoginUser identity(long userId, String username, String enterpriseRole) {
         return identity(userId, username, enterpriseRole, "default");
@@ -202,5 +206,17 @@ class PolicyDecisionServiceTest {
         assertThrows(ClientException.class, () -> policy.requirePermission(editor, "workflow:review"));
 
         assertEquals(1L, ((PolicyDecisionServiceImpl) policy).auditWriteFailureCount());
+    }
+
+    @Test void permissionDenyAuditReusesCurrentRequestTrace() {
+        LoginUser editor = identity(editorUser, "editor", "EMPLOYEE");
+        RagTraceContext.setTraceId("request-trace-2");
+
+        assertThrows(ClientException.class, () -> policy.requirePermission(editor, "workflow:review"));
+
+        String traceId = jdbc.queryForObject(
+                "SELECT trace_id FROM sys_auth_audit WHERE action='DENY' AND perm_code='workflow:review'",
+                String.class);
+        assertEquals("request-trace-2", traceId);
     }
 }

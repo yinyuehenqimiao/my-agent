@@ -7,6 +7,7 @@ import com.myagent.enterprise.dto.EnterpriseTypes.*;
 import com.myagent.enterprise.service.EnterpriseService;
 import com.myagent.enterprise.service.ExternalErpActionService;
 import com.myagent.framework.exception.ClientException;
+import com.myagent.framework.trace.RagTraceContext;
 import com.myagent.framework.enterprise.EmployeeBusinessPermissions;
 import com.myagent.framework.enterprise.EmployeeProfile;
 import com.myagent.framework.enterprise.EmployeeTenure;
@@ -158,5 +159,22 @@ class EnterpriseToolsTest {
         assertTrue(((TextBlock) result.getOutput().get(0)).getText().contains("erp-card"));
         verify(externalErpActions).prepareCreateLeave(any(), eq("session"), anyString(), any());
         verifyNoInteractions(service);
+    }
+
+    @Test
+    void toolAuditReusesRequestTraceAcrossAsyncBoundary() {
+        when(enterpriseSystem.getCurrentEmployee(any()))
+                .thenReturn(new EmployeeProfile("employee", "员工", "研发", "EMPLOYEE", "m", "h", true));
+        RagTraceContext.setTraceId("request-trace-1");
+        try {
+            var result = tool("get_my_profile").callAsync(param(Map.of())).block();
+
+            assertEquals(ToolResultState.SUCCESS, result.getState());
+            var invocation = org.mockito.ArgumentCaptor.forClass(com.myagent.framework.tool.ToolInvocation.class);
+            verify(audit).record(invocation.capture(), eq("request-trace-1"), eq("COMPLETED"), eq("SUCCESS"), anyLong());
+            assertEquals("request-trace-1", invocation.getValue().getTraceId());
+        } finally {
+            RagTraceContext.clear();
+        }
     }
 }
