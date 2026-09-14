@@ -27,7 +27,7 @@ class ChatRoutePlannerTest {
 
     @Test
     void shouldChooseHighestValidCandidateAndPreserveIntentKind() {
-        NodeScore lower = score("general", IntentKind.MCP, 0.71);
+        NodeScore lower = score("leave-query", IntentKind.WORKFLOW, 0.71);
         NodeScore higher = score("leave-approval", IntentKind.WORKFLOW, 0.94);
         when(classifier.classifyTargets("我要请年假")).thenReturn(List.of(lower, higher));
         when(routingService.route("leave-approval", IntentKind.WORKFLOW, 0.94, false, identity))
@@ -60,6 +60,34 @@ class ChatRoutePlannerTest {
 
         assertThat(plan.route().getDecision()).isEqualTo(RouteDecision.CLARIFY);
         assertThat(plan.route().getReason()).contains("暂时无法识别，请稍后重试");
+        verifyNoInteractions(routingService);
+    }
+
+    @Test
+    void shouldClarifyWhenTopCandidatesAreTooClose() {
+        when(classifier.classifyTargets("查询年假还是发起请假"))
+                .thenReturn(List.of(
+                        score("leave-query", IntentKind.MCP, 0.91),
+                        score("attendance-query", IntentKind.MCP, 0.85)));
+
+        ChatRoutePlan plan = planner.plan("查询年假还是发起请假", false, identity);
+
+        assertThat(plan.route().getDecision()).isEqualTo(RouteDecision.CLARIFY);
+        assertThat(plan.route().getReason()).contains("候选意图置信度接近");
+        verifyNoInteractions(routingService);
+    }
+
+    @Test
+    void shouldClarifyWhenTopCandidatesHaveDifferentKinds() {
+        when(classifier.classifyTargets("请帮我处理年假"))
+                .thenReturn(List.of(
+                        score("leave-policy", IntentKind.KB, 0.96),
+                        score("leave-approval", IntentKind.WORKFLOW, 0.70)));
+
+        ChatRoutePlan plan = planner.plan("请帮我处理年假", false, identity);
+
+        assertThat(plan.route().getDecision()).isEqualTo(RouteDecision.CLARIFY);
+        assertThat(plan.route().getReason()).contains("候选意图类型冲突");
         verifyNoInteractions(routingService);
     }
 
