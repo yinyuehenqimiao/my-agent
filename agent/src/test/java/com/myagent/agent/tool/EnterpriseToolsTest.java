@@ -10,6 +10,7 @@ import com.myagent.framework.enterprise.EmployeeBusinessPermissions;
 import com.myagent.framework.enterprise.EmployeeProfile;
 import com.myagent.framework.enterprise.EmployeeTenure;
 import com.myagent.framework.enterprise.EnterpriseSystemPort;
+import com.myagent.framework.enterprise.LeaveRequestSummary;
 import com.myagent.system.auth.service.PolicyDecisionService;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.TextBlock;
@@ -111,15 +112,21 @@ class EnterpriseToolsTest {
                 .thenReturn(new EmployeeTenure(LocalDate.of(2020, 9, 13), LocalDate.of(2026, 9, 13), 6, true));
         when(enterpriseSystem.getCurrentEmployeePermissions(any()))
                 .thenReturn(new EmployeeBusinessPermissions(java.util.List.of("查询本人年假", "发起请假")));
+        when(enterpriseSystem.getMyLeaveRequests(any())).thenReturn(java.util.List.of(
+                new LeaveRequestSummary("leave-1", LocalDate.of(2026, 9, 14), LocalDate.of(2026, 9, 15),
+                        java.math.BigDecimal.valueOf(2), "PENDING_MANAGER")));
 
         var tenure = tool("get_my_tenure").callAsync(param(Map.of("userId", "another-user"))).block();
         var permissions = tool("get_my_business_permissions").callAsync(param(Map.of())).block();
+        var requests = tool("list_my_leave_requests").callAsync(param(Map.of())).block();
 
         assertEquals(ToolResultState.SUCCESS, tenure.getState());
         assertTrue(((TextBlock) tenure.getOutput().get(0)).getText().contains("completedYears"));
         assertTrue(((TextBlock) permissions.getOutput().get(0)).getText().contains("查询本人年假"));
+        assertTrue(((TextBlock) requests.getOutput().get(0)).getText().contains("leave-1"));
         verify(enterpriseSystem).getCurrentEmployeeTenure(argThat(identity -> "employee".equals(identity.getUserId())));
         verify(enterpriseSystem).getCurrentEmployeePermissions(argThat(identity -> "employee".equals(identity.getUserId())));
+        verify(enterpriseSystem).getMyLeaveRequests(argThat(identity -> "employee".equals(identity.getUserId())));
     }
 
     @Test
@@ -129,7 +136,7 @@ class EnterpriseToolsTest {
                 Clock.system(ZoneId.of("Asia/Shanghai")), httpGateway, "HTTP_ERP");
         httpTools.registerTools();
 
-        assertEquals(java.util.Set.of("get_my_profile", "get_leave_balance", "get_my_tenure", "get_my_business_permissions"),
+        assertEquals(java.util.Set.of("get_my_profile", "get_leave_balance", "get_my_tenure", "get_my_business_permissions", "list_my_leave_requests"),
                 httpTools.tools().stream().map(AgentTool::getName).collect(java.util.stream.Collectors.toSet()));
     }
 }

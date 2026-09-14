@@ -13,6 +13,7 @@ import com.myagent.framework.enterprise.EnterpriseSystemPort;
 import com.myagent.framework.enterprise.LeaveBalance;
 import com.myagent.framework.enterprise.LeaveRequestCommand;
 import com.myagent.framework.enterprise.LeaveRequestResult;
+import com.myagent.framework.enterprise.LeaveRequestSummary;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -64,6 +65,14 @@ public class LocalEnterpriseSystemAdapter implements EnterpriseSystemPort {
         if ("MANAGER".equals(employee.businessRole())) permissions.add("处理直属下属请假审批");
         if ("HR".equals(employee.businessRole())) permissions.add("处理人事请假审批");
         return new EmployeeBusinessPermissions(permissions);
+    }
+
+    @Override
+    public List<LeaveRequestSummary> getMyLeaveRequests(ExecutionIdentity identity) {
+        return service.requests(requireActor(identity)).stream()
+                .map(request -> new LeaveRequestSummary(request.id(), request.startDate(), request.endDate(),
+                        java.math.BigDecimal.valueOf(request.days()), request.status()))
+                .toList();
     }
 
     @Override

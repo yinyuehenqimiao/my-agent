@@ -2,6 +2,8 @@ package com.myagent.framework.enterprise;
 
 import com.myagent.framework.context.ExecutionIdentity;
 
+import java.util.List;
+
 /**
  * 企业系统端口：抽象本地企业系统与未来 ERP。
  * <p>
@@ -23,6 +25,9 @@ public interface EnterpriseSystemPort {
 
     /** 当前员工可理解的业务权限名称，禁止直接返回内部权限码。 */
     EmployeeBusinessPermissions getCurrentEmployeePermissions(ExecutionIdentity identity);
+
+    /** 当前员工本人可查看的请假单摘要。 */
+    List<LeaveRequestSummary> getMyLeaveRequests(ExecutionIdentity identity);
 
     /**
      * 创建请假申请（写操作，幂等）。

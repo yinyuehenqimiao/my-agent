@@ -85,9 +85,9 @@ public class EnterpriseTools {
                 Map.of(), List.of(), true, RiskLevel.LOW, null), this::getMyTenure);
         toolGateway.register(def("get_my_business_permissions", "查询本人可理解的业务权限名称，不返回内部权限码",
                 Map.of(), List.of(), true, RiskLevel.LOW, null), this::getMyBusinessPermissions);
-        if (!isLocalAdapter()) return;
         toolGateway.register(def("list_my_leave_requests", "查询本人的请假申请和当前状态", Map.of(), List.of(),
                 true, RiskLevel.LOW, null), this::listMyLeaveRequests);
+        if (!isLocalAdapter()) return;
         toolGateway.register(def("get_leave_request_detail", "查询有权限访问的申请详情与审批时间线",
                 Map.of("requestId", prop("string", "申请ID")), List.of("requestId"),
                 true, RiskLevel.LOW, null), this::getLeaveRequestDetail);
@@ -134,7 +134,7 @@ public class EnterpriseTools {
     }
 
     private ToolResult listMyLeaveRequests(ToolInvocation inv) {
-        return ToolResult.success(service.requests(actor(inv)), inv.getTraceId());
+        return ToolResult.success(enterpriseSystem.getMyLeaveRequests(inv.getIdentity()), inv.getTraceId());
     }
 
     private ToolResult getLeaveRequestDetail(ToolInvocation inv) {
@@ -184,10 +184,10 @@ public class EnterpriseTools {
     }
 
     private List<String> registeredNames() {
-        List<String> selfService = List.of("get_my_profile", "get_leave_balance", "get_my_tenure", "get_my_business_permissions");
+        List<String> selfService = List.of("get_my_profile", "get_leave_balance", "get_my_tenure", "get_my_business_permissions", "list_my_leave_requests");
         if (!isLocalAdapter()) return selfService;
         return java.util.stream.Stream.concat(selfService.stream(), java.util.stream.Stream.of(
-                        "list_my_leave_requests", "get_leave_request_detail", "list_my_approval_tasks",
+                        "get_leave_request_detail", "list_my_approval_tasks",
                         "prepare_leave_request", "prepare_approval_decision", "prepare_leave_withdrawal"))
                 .toList();
     }

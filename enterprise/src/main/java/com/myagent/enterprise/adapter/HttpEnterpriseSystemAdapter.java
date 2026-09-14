@@ -8,6 +8,7 @@ import com.myagent.framework.enterprise.EnterpriseSystemPort;
 import com.myagent.framework.enterprise.LeaveBalance;
 import com.myagent.framework.enterprise.LeaveRequestCommand;
 import com.myagent.framework.enterprise.LeaveRequestResult;
+import com.myagent.framework.enterprise.LeaveRequestSummary;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myagent.framework.exception.ClientException;
@@ -78,6 +79,24 @@ public class HttpEnterpriseSystemAdapter implements EnterpriseSystemPort {
             if (item.isTextual() && !item.asText().isBlank()) permissions.add(item.asText());
         });
         return new EmployeeBusinessPermissions(permissions);
+    }
+
+    @Override
+    public java.util.List<LeaveRequestSummary> getMyLeaveRequests(ExecutionIdentity identity) {
+        JsonNode data = get(identity, "/api/erp/v1/leave-requests/me");
+        if (!data.isArray()) throw new ClientException("ERP 返回的请假列表数据无效");
+        java.util.List<LeaveRequestSummary> requests = new java.util.ArrayList<>();
+        try {
+            for (JsonNode item : data) {
+                requests.add(new LeaveRequestSummary(text(item, "id"),
+                        java.time.LocalDate.parse(text(item, "startDate")),
+                        java.time.LocalDate.parse(text(item, "endDate")), item.path("leaveDays").decimalValue(),
+                        text(item, "status")));
+            }
+            return java.util.List.copyOf(requests);
+        } catch (Exception exception) {
+            throw new ClientException("ERP 返回的请假列表数据无效");
+        }
     }
 
     @Override

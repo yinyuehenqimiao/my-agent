@@ -46,6 +46,10 @@ class HttpEnterpriseSystemAdapterTest {
             byte[] body = "{\"code\":\"0\",\"data\":{\"id\":\"leave-1\",\"status\":\"PENDING_MANAGER\"}}".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
         });
+        server.createContext("/api/erp/v1/leave-requests/me", exchange -> {
+            byte[] body = "{\"code\":\"0\",\"data\":[{\"id\":\"leave-1\",\"startDate\":\"2026-09-14\",\"endDate\":\"2026-09-15\",\"leaveDays\":2,\"status\":\"PENDING_MANAGER\"}]}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
+        });
         server.start();
         adapter = new HttpEnterpriseSystemAdapter("http://127.0.0.1:" + server.getAddress().getPort(), "test-token", 2000);
     }
@@ -64,6 +68,14 @@ class HttpEnterpriseSystemAdapterTest {
         assertThat(adapter.getCurrentEmployeeTenure(identity).completedYears()).isEqualTo(6);
         assertThat(adapter.getCurrentEmployeePermissions(identity).permissions())
                 .containsExactly("查询本人年假", "发起请假");
+    }
+
+    @Test void mapsCurrentEmployeeLeaveRequests() {
+        var identity = LoginUser.builder().userId("u1").tenantId("tenant-a").build();
+
+        assertThat(adapter.getMyLeaveRequests(identity))
+                .extracting(request -> request.requestId(), request -> request.status())
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("leave-1", "PENDING_MANAGER"));
     }
 
     @Test void unavailableErpFailsClosed() {
