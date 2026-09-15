@@ -64,6 +64,17 @@ class ChatRoutePlannerTest {
     }
 
     @Test
+    void shouldRecognizeCapabilityDiscoveryWithoutCallingTheIntentModel() {
+        ChatRoutePlan plan = planner.plan(
+                "我能用你干什么，就是直接使用的工具，连接系统的", false, identity);
+
+        assertThat(plan.intentCode()).isEqualTo("sys-about-bot");
+        assertThat(plan.intentKind()).isEqualTo(IntentKind.SYSTEM);
+        assertThat(plan.route().getDecision()).isEqualTo(RouteDecision.SYSTEM);
+        verifyNoInteractions(classifier, routingService);
+    }
+
+    @Test
     void shouldClarifyWhenTopCandidatesAreTooClose() {
         when(classifier.classifyTargets("查询年假还是发起请假"))
                 .thenReturn(List.of(

@@ -80,6 +80,10 @@ public class ChatRoutePlanner {
             RouteResult route = routingService.route(null, IntentKind.WORKFLOW, 1D, true, identity);
             return new ChatRoutePlan(null, "待确认业务", IntentKind.WORKFLOW, route);
         }
+        if (isCapabilityDiscovery(question)) {
+            return new ChatRoutePlan("sys-about-bot", "关于助手", IntentKind.SYSTEM,
+                    RouteResult.of(RouteDecision.SYSTEM, null, "运行时能力说明", 1D));
+        }
         List<NodeScore> candidates;
         try {
             candidates = intentClassifier.classifyTargets(question);
@@ -108,6 +112,32 @@ public class ChatRoutePlanner {
         RouteResult route = routingService.route(
                 node.getId(), kind, best.getScore(), hasPendingAction, identity);
         return new ChatRoutePlan(node.getId(), node.getName(), kind, route);
+    }
+
+    /**
+     * 能力发现是本系统自身元数据查询，不应依赖外部分类模型，否则模型故障时用户连“能做什么”都无法获知。
+     */
+    private boolean isCapabilityDiscovery(String question) {
+        if (question == null || question.isBlank()) {
+            return false;
+        }
+        String normalized = question.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[\\p{P}\\p{Z}]", "");
+        boolean mentionsAssistant = normalized.contains("你")
+                || normalized.contains("助手")
+                || normalized.contains("智能体")
+                || normalized.contains("agent")
+                || normalized.contains("ai");
+        return normalized.contains("你是谁")
+                || normalized.contains("能用你干什么")
+                || (mentionsAssistant && (normalized.contains("能做什么")
+                || normalized.contains("能干什么")
+                || normalized.contains("有什么工具")
+                || normalized.contains("哪些工具")
+                || normalized.contains("工具可用")
+                || normalized.contains("连接哪些系统")
+                || normalized.contains("接入哪些系统")
+                || normalized.contains("连接系统")));
     }
 
     private String ambiguityReason(List<NodeScore> candidates) {
