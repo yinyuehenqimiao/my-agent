@@ -9,6 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import com.myagent.workflow.service.AuditQueryService;
 
 import java.util.Date;
 
@@ -17,10 +18,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RagTraceAuditServiceTest {
 
     private RagTraceAuditService service;
+    private JdbcTemplate jdbc;
 
     @BeforeEach
     void setUp() {
-        JdbcTemplate jdbc = new JdbcTemplate(new DriverManagerDataSource(
+        jdbc = new JdbcTemplate(new DriverManagerDataSource(
                 "jdbc:h2:mem:trace-audit;MODE=PostgreSQL;DB_CLOSE_DELAY=-1", "sa", ""));
         jdbc.execute("DROP ALL OBJECTS");
         jdbc.execute("CREATE TABLE t_rag_trace_run(id VARCHAR PRIMARY KEY,trace_id VARCHAR UNIQUE,tenant_id VARCHAR," +
@@ -32,9 +34,15 @@ class RagTraceAuditServiceTest {
                 "method_name VARCHAR,status VARCHAR,error_message VARCHAR,start_time TIMESTAMP,end_time TIMESTAMP," +
                 "duration_ms BIGINT,extra_data VARCHAR,create_time TIMESTAMP,update_time TIMESTAMP,deleted SMALLINT DEFAULT 0," +
                 "UNIQUE(trace_id,node_id))");
+        jdbc.execute("CREATE TABLE operation_audit(id BIGINT PRIMARY KEY,operation VARCHAR,operator_id VARCHAR," +
+                "target_type VARCHAR,target_id VARCHAR,trace_id VARCHAR,tenant_id VARCHAR,detail VARCHAR,created_time TIMESTAMP)");
+        jdbc.execute("CREATE TABLE sys_auth_audit(id BIGINT PRIMARY KEY,user_id VARCHAR,username VARCHAR,tenant_id VARCHAR," +
+                "perm_code VARCHAR,action VARCHAR,reason VARCHAR,trace_id VARCHAR,create_time TIMESTAMP)");
+        jdbc.execute("CREATE TABLE ent_audit(id VARCHAR PRIMARY KEY,request_id VARCHAR,actor_id VARCHAR,action_id VARCHAR," +
+                "event VARCHAR,comment VARCHAR,tenant_id VARCHAR,trace_id VARCHAR,created_at TIMESTAMP)");
         RagTraceProperties properties = new RagTraceProperties();
         properties.setMaxErrorLength(12);
-        service = new RagTraceAuditService(jdbc, properties);
+        service = new RagTraceAuditService(jdbc, properties, new AuditQueryService(jdbc));
     }
 
     @Test
@@ -93,6 +101,23 @@ class RagTraceAuditServiceTest {
             assertThat(run.getTraceId()).isEqualTo("trace-a");
             assertThat(run.getQuestion()).isEqualTo("年假余额");
         });
+    }
+
+    @Test
+    void detailIncludesToolAuthorizationAndBusinessEventsForSameTraceOnly() {
+        service.startRun(RagTraceRunDO.builder().id("run-events").traceId("trace-events")
+                .tenantId("tenant-a").status("SUCCESS").startTime(new Date()).build());
+        jdbc.update("INSERT INTO operation_audit VALUES(1,'TOOL_EXECUTION','employee','tool','get_my_profile','trace-events','tenant-a','phase=COMPLETED',CURRENT_TIMESTAMP)");
+        jdbc.update("INSERT INTO sys_auth_audit VALUES(2,'employee','员工','tenant-a','leave:read','DENY','范围拒绝','trace-events',CURRENT_TIMESTAMP)");
+        jdbc.update("INSERT INTO ent_audit VALUES('3','leave-1','employee',NULL,'SUBMITTED','已提交','tenant-a','trace-events',CURRENT_TIMESTAMP)");
+        jdbc.update("INSERT INTO operation_audit VALUES(4,'TOOL_EXECUTION','other','tool','hidden','trace-events','tenant-b','phase=COMPLETED',CURRENT_TIMESTAMP)");
+
+        var detail = service.detail(identity("tenant-a"), "trace-events");
+
+        assertThat(detail.getEvents()).hasSize(3);
+        assertThat(detail.getEvents()).extracting(event -> event.getCategory())
+                .containsExactlyInAnyOrder("TOOL", "AUTHORIZATION", "BUSINESS");
+        assertThat(detail.getEvents()).extracting(event -> event.getActorId()).doesNotContain("other");
     }
 
     private LoginUser identity(String tenantId) {

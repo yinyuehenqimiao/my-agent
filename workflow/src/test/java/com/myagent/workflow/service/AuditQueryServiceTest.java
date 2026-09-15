@@ -61,6 +61,23 @@ class AuditQueryServiceTest {
                 .hasMessageContaining("缺少租户身份");
     }
 
+    @Test
+    void findsEveryAuditDomainByTraceAndTenant() {
+        jdbc.update("INSERT INTO operation_audit VALUES(6,'TOOL_EXECUTION','employee','tool','get_my_profile','trace-request','tenant-a','phase=COMPLETED',TIMESTAMP '2026-09-13 15:00:00')");
+        jdbc.update("INSERT INTO operation_audit VALUES(7,'WF_EXECUTE','employee','workflow','leave','trace-request','tenant-a','status=SUCCESS',TIMESTAMP '2026-09-13 15:01:00')");
+        jdbc.update("INSERT INTO sys_auth_audit VALUES(8,'employee','员工','tenant-a','leave:read','DENY','范围拒绝','trace-request',TIMESTAMP '2026-09-13 15:02:00')");
+        jdbc.update("INSERT INTO ent_audit VALUES('9','leave-2','employee',NULL,'SUBMITTED','已提交','tenant-a','trace-request',TIMESTAMP '2026-09-13 15:03:00')");
+        jdbc.update("INSERT INTO operation_audit VALUES(10,'TOOL_EXECUTION','other','tool','hidden','trace-request','tenant-b','phase=COMPLETED',TIMESTAMP '2026-09-13 15:04:00')");
+
+        var rows = service.byTrace(identity("tenant-a"), "trace-request");
+
+        assertThat(rows).hasSize(4);
+        assertThat(rows).extracting(AuditQueryService.AuditEntry::category)
+                .containsExactly(AuditQueryService.Category.BUSINESS, AuditQueryService.Category.AUTHORIZATION,
+                        AuditQueryService.Category.PLATFORM, AuditQueryService.Category.TOOL);
+        assertThat(rows).extracting(AuditQueryService.AuditEntry::actorId).doesNotContain("other");
+    }
+
     private LoginUser identity(String tenantId) {
         return LoginUser.builder().userId("auditor").username("审计员").tenantId(tenantId).build();
     }

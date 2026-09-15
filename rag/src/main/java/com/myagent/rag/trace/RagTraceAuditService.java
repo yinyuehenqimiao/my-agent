@@ -6,6 +6,7 @@ import com.myagent.framework.context.ExecutionIdentity;
 import com.myagent.framework.exception.ClientException;
 import com.myagent.rag.config.RagTraceProperties;
 import com.myagent.rag.controller.vo.RagTraceDetailVO;
+import com.myagent.rag.controller.vo.RagTraceEventVO;
 import com.myagent.rag.controller.vo.RagTraceNodeVO;
 import com.myagent.rag.controller.vo.RagTraceRunVO;
 import com.myagent.rag.controller.request.RagTraceRunPageRequest;
@@ -15,6 +16,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import com.myagent.workflow.service.AuditQueryService;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -32,6 +34,7 @@ public class RagTraceAuditService {
 
     private final JdbcTemplate jdbc;
     private final RagTraceProperties properties;
+    private final AuditQueryService crossDomainAudit;
 
     public void startRun(RagTraceRunDO run) {
         if (run == null || !hasText(run.getTraceId()) || !hasText(run.getTenantId())) {
@@ -106,7 +109,14 @@ public class RagTraceAuditService {
                          WHERE n.trace_id=? AND r.tenant_id=? AND n.deleted=0
                          ORDER BY n.start_time,n.id
                         """, (rs, rowNum) -> toNode(rs), traceId, tenantId);
-        return RagTraceDetailVO.builder().run(runs.get(0)).nodes(nodes).build();
+        List<RagTraceEventVO> events = crossDomainAudit.byTrace(identity, traceId).stream()
+                .map(event -> RagTraceEventVO.builder()
+                        .id(event.id()).category(event.category().name()).eventCode(event.eventCode())
+                        .actorId(event.actorId()).targetType(event.targetType()).targetId(event.targetId())
+                        .traceId(event.traceId()).detail(event.detail()).createdTime(event.createdTime())
+                        .build())
+                .toList();
+        return RagTraceDetailVO.builder().run(runs.get(0)).nodes(nodes).events(events).build();
     }
 
     public Page<RagTraceRunVO> page(ExecutionIdentity identity, RagTraceRunPageRequest request) {

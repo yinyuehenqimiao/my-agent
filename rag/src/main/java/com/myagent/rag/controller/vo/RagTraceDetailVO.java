@@ -32,4 +32,7 @@ public class RagTraceDetailVO {
     private RagTraceRunVO run;
 
     private List<RagTraceNodeVO> nodes;
+
+    /** 与本次推理请求共享 traceId 的工具、权限、平台和企业业务事件。 */
+    private List<RagTraceEventVO> events;
 }

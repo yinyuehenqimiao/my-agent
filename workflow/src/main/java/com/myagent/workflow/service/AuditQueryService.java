@@ -47,6 +47,59 @@ public class AuditQueryService {
                 .toList();
     }
 
+    /** 精确返回同一请求链路的全部跨域审计事件，不受后台列表分页窗口影响。 */
+    public List<AuditEntry> byTrace(ExecutionIdentity identity, String traceId) {
+        if (identity == null || identity.getTenantId() == null || identity.getTenantId().isBlank()) {
+            throw new ClientException("缺少租户身份，拒绝查询审计记录");
+        }
+        if (traceId == null || traceId.isBlank()) {
+            throw new ClientException("缺少 traceId，拒绝查询审计链路");
+        }
+        String tenantId = identity.getTenantId();
+        List<AuditEntry> entries = new ArrayList<>();
+        entries.addAll(queryOperationAuditByTrace(tenantId, traceId, false));
+        entries.addAll(queryOperationAuditByTrace(tenantId, traceId, true));
+        entries.addAll(jdbc.query("""
+                        SELECT CAST(id AS VARCHAR) AS audit_id, user_id, perm_code, action, reason,
+                               trace_id, create_time
+                          FROM sys_auth_audit
+                         WHERE tenant_id = ? AND trace_id = ?
+                        """, (rs, rowNum) -> new AuditEntry(
+                        rs.getString("audit_id"), Category.AUTHORIZATION,
+                        "AUTH_" + rs.getString("action"), rs.getString("user_id"),
+                        "permission", rs.getString("perm_code"), rs.getString("trace_id"),
+                        rs.getString("reason"), rs.getTimestamp("create_time")), tenantId, traceId));
+        entries.addAll(jdbc.query("""
+                        SELECT id, request_id, actor_id, action_id, event, comment, trace_id, created_at
+                          FROM ent_audit
+                         WHERE tenant_id = ? AND trace_id = ?
+                        """, (rs, rowNum) -> new AuditEntry(
+                        rs.getString("id"), Category.BUSINESS, rs.getString("event"),
+                        rs.getString("actor_id"), "leave_request", rs.getString("request_id"),
+                        rs.getString("trace_id"), businessDetail(rs.getString("action_id"), rs.getString("comment")),
+                        rs.getTimestamp("created_at")), tenantId, traceId));
+        return entries.stream()
+                .sorted(Comparator.comparing(AuditEntry::createdTime,
+                        Comparator.nullsFirst(Comparator.naturalOrder())).reversed())
+                .toList();
+    }
+
+    private List<AuditEntry> queryOperationAuditByTrace(String tenantId, String traceId, boolean toolOnly) {
+        String operator = toolOnly ? "=" : "<>";
+        return jdbc.query("""
+                        SELECT CAST(id AS VARCHAR) AS audit_id, operation, operator_id, target_type,
+                               target_id, trace_id, detail, created_time
+                          FROM operation_audit
+                         WHERE tenant_id = ? AND trace_id = ? AND operation %s 'TOOL_EXECUTION'
+                        """.formatted(operator),
+                (rs, rowNum) -> new AuditEntry(
+                        rs.getString("audit_id"), toolOnly ? Category.TOOL : Category.PLATFORM,
+                        rs.getString("operation"), rs.getString("operator_id"),
+                        rs.getString("target_type"), rs.getString("target_id"),
+                        rs.getString("trace_id"), rs.getString("detail"),
+                        rs.getTimestamp("created_time")), tenantId, traceId);
+    }
+
     private List<AuditEntry> queryOperationAudit(String tenantId, int limit, boolean toolOnly) {
         String operator = toolOnly ? "=" : "<>";
         return jdbc.query("""

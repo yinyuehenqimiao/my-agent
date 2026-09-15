@@ -24,6 +24,10 @@
         </dependency>
         <dependency>
             <groupId>com.myagent</groupId>
+            <artifactId>workflow</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.myagent</groupId>
             <artifactId>infra-ai</artifactId>
         </dependency>
 
