@@ -38,6 +38,16 @@ public class ChatRoutePlanner {
         return planBatch(question, hasPendingAction, identity).plan();
     }
 
+    /** 活动工作流的短回答属于槽位输入，必须跳过顶层意图分类并续接原流程。 */
+    public ChatRoutePlan plan(String question, WorkflowContinuation continuation, ExecutionIdentity identity) {
+        if (continuation == null) {
+            return plan(question, false, identity);
+        }
+        RouteResult route = RouteResult.of(RouteDecision.WORKFLOW, continuation.workflowDefKey(),
+                "继续当前工作流：" + continuation.status().name(), 1D);
+        return new ChatRoutePlan(continuation.workflowDefKey(), "进行中的业务流程", IntentKind.WORKFLOW, route);
+    }
+
     /**
      * 对明确的并列问题逐个分类，并仅合并可安全共同执行的知识库查询。
      * 异构执行路径不做隐式排序或并行执行，必须由用户明确下一步。

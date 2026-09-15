@@ -32,7 +32,9 @@ import com.myagent.agent.enums.AgentMessageStatus;
 import com.myagent.agent.enums.AgentSSEEventType;
 import com.myagent.agent.routing.ChatRoutePlan;
 import com.myagent.agent.routing.ChatRoutePlanner;
-import com.myagent.agent.routing.EnterprisePendingActionResolver;
+import com.myagent.agent.routing.ConversationContinuationResolver;
+import com.myagent.agent.routing.ConversationWorkflowStateService;
+import com.myagent.agent.routing.WorkflowContinuation;
 import com.myagent.agent.service.AgentChatService;
 import com.myagent.agent.service.AgentConversationService;
 import com.myagent.agent.service.handler.AgentRunGate;
@@ -67,6 +69,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -85,7 +88,8 @@ public class AgentChatServiceImpl implements AgentChatService {
     private final AgentRunGate runGate;
     private final ChatRoutePlanner routePlanner;
     private final KnowledgeSearchFacade knowledgeSearchFacade;
-    private final EnterprisePendingActionResolver pendingActionResolver;
+    private final ConversationContinuationResolver continuationResolver;
+    private final ConversationWorkflowStateService workflowStateService;
     private final ObjectMapper objectMapper;
     private final RagTraceAuditService traceAuditService;
     private final RagStreamTraceSupport streamTraceSupport;
@@ -141,8 +145,15 @@ public class AgentChatServiceImpl implements AgentChatService {
         String title = conversationService.touchConversation(conversationId, userId, question);
         String questionMessageId = conversationService.addUserMessage(conversationId, userId, question);
 
-        boolean hasPendingAction = pendingActionResolver.hasPendingAction(userId, conversationId);
-        ChatRoutePlan plan = routePlanner.plan(question, hasPendingAction, identity);
+        String tenantId = StrUtil.blankToDefault(identity.getTenantId(), "default");
+        Optional<WorkflowContinuation> continuation = continuationResolver.resolve(
+                tenantId, userId, conversationId);
+        ChatRoutePlan plan;
+        if (continuation.isPresent()) {
+            plan = routePlanner.plan(question, continuation.get(), identity);
+        } else {
+            plan = routePlanner.plan(question, false, identity);
+        }
         sender.sendEvent(AgentSSEEventType.ROUTE_DECISION.value(), routePayload(plan));
 
         AgentRunHandle runHandle = new AgentRunHandle(taskId, sender, taskManager);
@@ -186,6 +197,7 @@ public class AgentChatServiceImpl implements AgentChatService {
                 ? agentProvider.getWorkflowAgent(plan.route().getTarget())
                 : agentProvider.getAgent();
         if (decision == RouteDecision.WORKFLOW) {
+            workflowStateService.activate(tenantId, userId, conversationId, plan.route().getTarget());
             sender.sendEvent(AgentSSEEventType.WORKFLOW_PROGRESS.value(), Map.of(
                     "workflowDefKey", plan.route().getTarget(), "node", "参数收集与确认", "status", "RUNNING"));
         }
@@ -204,6 +216,9 @@ public class AgentChatServiceImpl implements AgentChatService {
                 case CANCELLED -> executionSpan.finishCancelledIfRunning();
                 case ERROR -> executionSpan.finishError(error);
             }
+            if (decision == RouteDecision.WORKFLOW && settlement == AgentRunHandle.Settlement.SUCCESS) {
+                synchronizeWorkflowState(identity, tenantId, userId, conversationId);
+            }
         });
         try {
             startAgentRun(question, userId, conversationId, taskId, title, questionMessageId,
@@ -213,6 +228,22 @@ public class AgentChatServiceImpl implements AgentChatService {
             throw error;
         } finally {
             executionSpan.detach();
+        }
+    }
+
+    private void synchronizeWorkflowState(LoginUser identity, String tenantId, String userId,
+                                          String conversationId) {
+        LoginUser previous = UserContext.get();
+        try {
+            // HTTP ERP 适配器还会校验线程身份；异步流完成时显式恢复请求身份，不能依赖 ThreadLocal 碰巧透传。
+            UserContext.set(identity);
+            continuationResolver.synchronizeAfterWorkflowTurn(tenantId, userId, conversationId);
+        } finally {
+            if (previous == null) {
+                UserContext.clear();
+            } else {
+                UserContext.set(previous);
+            }
         }
     }
 

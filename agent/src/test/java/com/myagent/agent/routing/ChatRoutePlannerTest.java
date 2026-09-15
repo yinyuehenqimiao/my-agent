@@ -138,6 +138,19 @@ class ChatRoutePlannerTest {
         verifyNoInteractions(classifier);
     }
 
+    @Test
+    void shouldContinueActiveWorkflowWithShortSlotAnswerWithoutClassifyingItAsANewIntent() {
+        WorkflowContinuation continuation = new WorkflowContinuation(
+                "leave-approval", WorkflowConversationStatus.COLLECTING_PARAMETERS);
+
+        ChatRoutePlan plan = planner.plan("旅游", continuation, identity);
+
+        assertThat(plan.route().getDecision()).isEqualTo(RouteDecision.WORKFLOW);
+        assertThat(plan.route().getTarget()).isEqualTo("leave-approval");
+        assertThat(plan.route().getReason()).contains("继续当前工作流");
+        verifyNoInteractions(classifier, routingService);
+    }
+
     private NodeScore score(String id, IntentKind kind, double score) {
         return NodeScore.builder()
                 .node(IntentNode.builder().id(id).name(id).kind(kind).build())

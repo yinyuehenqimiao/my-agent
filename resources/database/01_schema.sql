@@ -512,3 +512,24 @@ CREATE TABLE IF NOT EXISTS t_rag_trace_node (
 );
 CREATE INDEX IF NOT EXISTS idx_rag_trace_node_timeline
     ON t_rag_trace_node (trace_id, start_time, id);
+
+-- 会话执行管线控制状态；与 AgentScope 模型记忆分离，供路由层稳定续接固定流程。
+CREATE TABLE IF NOT EXISTS t_agent_route_state (
+    tenant_id           VARCHAR(64)  NOT NULL,
+    user_id             VARCHAR(64)  NOT NULL,
+    conversation_id     VARCHAR(64)  NOT NULL,
+    pipeline_type       VARCHAR(16)  NOT NULL,
+    pipeline_target     VARCHAR(128) NOT NULL,
+    status              VARCHAR(32)  NOT NULL,
+    expected_input      VARCHAR(64),
+    action_id           VARCHAR(64),
+    workflow_instance_id VARCHAR(64),
+    version             BIGINT       NOT NULL DEFAULT 0,
+    expires_at          TIMESTAMP(3) NOT NULL,
+    create_time         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (tenant_id, user_id, conversation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_route_state_active
+    ON t_agent_route_state (tenant_id, user_id, status, expires_at);
+COMMENT ON TABLE t_agent_route_state IS '会话当前执行管线的显式控制状态，不存储模型上下文';

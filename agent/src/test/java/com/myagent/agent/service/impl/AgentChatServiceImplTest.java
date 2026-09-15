@@ -25,7 +25,10 @@ import com.myagent.agent.service.handler.AgentRunGate;
 import com.myagent.agent.tool.AgentToolCatalog.ResolvedCatalog;
 import com.myagent.agent.routing.ChatRoutePlan;
 import com.myagent.agent.routing.ChatRoutePlanner;
-import com.myagent.agent.routing.EnterprisePendingActionResolver;
+import com.myagent.agent.routing.ConversationContinuationResolver;
+import com.myagent.agent.routing.ConversationWorkflowStateService;
+import com.myagent.agent.routing.WorkflowContinuation;
+import com.myagent.agent.routing.WorkflowConversationStatus;
 import com.myagent.framework.context.LoginUser;
 import com.myagent.framework.context.UserContext;
 import com.myagent.framework.exception.ClientException;
@@ -48,6 +51,7 @@ import reactor.core.publisher.Flux;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
@@ -79,7 +83,8 @@ class AgentChatServiceImplTest {
     private AgentRunGate runGate;
     private ChatRoutePlanner routePlanner;
     private KnowledgeSearchFacade knowledgeSearchFacade;
-    private EnterprisePendingActionResolver pendingActionResolver;
+    private ConversationContinuationResolver continuationResolver;
+    private ConversationWorkflowStateService workflowStateService;
     private RagTraceAuditService traceAuditService;
     private RagStreamTraceSupport streamTraceSupport;
     private RagStreamTraceSupport.StreamSpan executionSpan;
@@ -95,14 +100,16 @@ class AgentChatServiceImplTest {
         runGate = mock(AgentRunGate.class);
         routePlanner = mock(ChatRoutePlanner.class);
         knowledgeSearchFacade = mock(KnowledgeSearchFacade.class);
-        pendingActionResolver = mock(EnterprisePendingActionResolver.class);
+        continuationResolver = mock(ConversationContinuationResolver.class);
+        workflowStateService = mock(ConversationWorkflowStateService.class);
         traceAuditService = mock(RagTraceAuditService.class);
         streamTraceSupport = mock(RagStreamTraceSupport.class);
         executionSpan = mock(RagStreamTraceSupport.StreamSpan.class);
         when(streamTraceSupport.beginStreamNode(anyString(), anyString())).thenReturn(executionSpan);
         agent = mock(ReActAgent.class);
         service = new AgentChatServiceImpl(agentProvider, conversationService, taskManager, runGate,
-                routePlanner, knowledgeSearchFacade, pendingActionResolver, new ObjectMapper().findAndRegisterModules(),
+                routePlanner, knowledgeSearchFacade, continuationResolver, workflowStateService,
+                new ObjectMapper().findAndRegisterModules(),
                 traceAuditService, streamTraceSupport);
 
         gateReleased = new AtomicInteger();
@@ -114,6 +121,8 @@ class AgentChatServiceImplTest {
         when(routePlanner.plan(anyString(), anyBoolean(), any())).thenReturn(new ChatRoutePlan(
                 "open-question", "开放问题", IntentKind.MCP,
                 RouteResult.of(RouteDecision.REACT, "default", "授权 ReAct", 0.9)));
+        when(continuationResolver.resolve(anyString(), anyString(), anyString()))
+                .thenReturn(Optional.empty());
         UserContext.set(LoginUser.builder().userId(USER_ID).username("tester").build());
     }
 
@@ -368,6 +377,27 @@ class AgentChatServiceImplTest {
         verify(agentProvider, never()).getAgent();
         verify(streamTraceSupport).beginStreamNode("workflow-agent:leave-approval", "WORKFLOW");
         verify(executionSpan).finishSuccess();
+        verify(continuationResolver).synchronizeAfterWorkflowTurn(
+                "default", USER_ID, CONVERSATION_ID);
+    }
+
+    @Test
+    void shouldResumeActiveWorkflowForShortSlotAnswerBeforeClassifyingANewIntent() {
+        WorkflowContinuation continuation = new WorkflowContinuation(
+                "leave-approval", WorkflowConversationStatus.COLLECTING_PARAMETERS);
+        when(continuationResolver.resolve("default", USER_ID, CONVERSATION_ID))
+                .thenReturn(Optional.of(continuation));
+        when(routePlanner.plan(eq("旅游"), eq(continuation), any())).thenReturn(new ChatRoutePlan(
+                "leave-approval", "进行中的业务流程", IntentKind.WORKFLOW,
+                RouteResult.of(RouteDecision.WORKFLOW, "leave-approval", "继续当前工作流", 1D)));
+        when(agentProvider.getWorkflowAgent("leave-approval")).thenReturn(new ActiveAgent(
+                agent, new ResolvedCatalog("固定流程", List.of(), List.of())));
+        when(agent.streamEvents(anyString(), any(RuntimeContext.class))).thenReturn(Flux.empty());
+
+        service.streamChat("旅游", CONVERSATION_ID, new SseEmitter());
+
+        verify(routePlanner).plan(eq("旅游"), eq(continuation), any());
+        verify(agentProvider).getWorkflowAgent("leave-approval");
     }
 
     @Test
