@@ -86,6 +86,28 @@ public class ConversationWorkflowStateService {
         return states.stream().findFirst();
     }
 
+    /**
+     * 返回仍在会话 TTL 内的最近非活动流程，仅用于理解“能修改吗”等紧邻省略式追问。
+     * 活动流程不从这里返回，避免与正常续接语义混淆。
+     */
+    public Optional<RecentWorkflowContext> findRecentContext(
+            String tenantId, String userId, String conversationId) {
+        requireScope(tenantId, userId, conversationId);
+        List<RecentWorkflowContext> states = jdbc.query("""
+                        SELECT pipeline_target,status
+                          FROM t_agent_route_state
+                         WHERE tenant_id=? AND user_id=? AND conversation_id=?
+                           AND pipeline_type='WORKFLOW'
+                           AND status NOT IN ('COLLECTING_PARAMETERS','AWAITING_CONFIRMATION')
+                           AND expires_at>?
+                        """,
+                (rs, rowNum) -> new RecentWorkflowContext(
+                        rs.getString("pipeline_target"),
+                        WorkflowConversationStatus.valueOf(rs.getString("status"))),
+                tenantId, userId, conversationId, LocalDateTime.now());
+        return states.stream().findFirst();
+    }
+
     public void complete(String tenantId, String userId, String conversationId) {
         requireScope(tenantId, userId, conversationId);
         jdbc.update("""

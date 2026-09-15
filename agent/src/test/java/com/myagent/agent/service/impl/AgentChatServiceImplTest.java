@@ -20,14 +20,17 @@ package com.myagent.agent.service.impl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myagent.agent.config.ReActAgentProvider;
 import com.myagent.agent.config.ReActAgentProvider.ActiveAgent;
+import com.myagent.agent.dto.AgentBlock;
 import com.myagent.agent.service.AgentConversationService;
 import com.myagent.agent.service.AgentCapabilityService;
+import com.myagent.agent.service.CurrentTimeService;
 import com.myagent.agent.service.handler.AgentRunGate;
 import com.myagent.agent.tool.AgentToolCatalog.ResolvedCatalog;
 import com.myagent.agent.routing.ChatRoutePlan;
 import com.myagent.agent.routing.ChatRoutePlanner;
 import com.myagent.agent.routing.ConversationContinuationResolver;
 import com.myagent.agent.routing.ConversationWorkflowStateService;
+import com.myagent.agent.routing.RecentWorkflowContext;
 import com.myagent.agent.routing.WorkflowContinuation;
 import com.myagent.agent.routing.WorkflowConversationStatus;
 import com.myagent.framework.context.LoginUser;
@@ -85,6 +88,7 @@ class AgentChatServiceImplTest {
     private ChatRoutePlanner routePlanner;
     private KnowledgeSearchFacade knowledgeSearchFacade;
     private AgentCapabilityService capabilityService;
+    private CurrentTimeService currentTimeService;
     private ConversationContinuationResolver continuationResolver;
     private ConversationWorkflowStateService workflowStateService;
     private RagTraceAuditService traceAuditService;
@@ -103,6 +107,7 @@ class AgentChatServiceImplTest {
         routePlanner = mock(ChatRoutePlanner.class);
         knowledgeSearchFacade = mock(KnowledgeSearchFacade.class);
         capabilityService = mock(AgentCapabilityService.class);
+        currentTimeService = mock(CurrentTimeService.class);
         continuationResolver = mock(ConversationContinuationResolver.class);
         workflowStateService = mock(ConversationWorkflowStateService.class);
         traceAuditService = mock(RagTraceAuditService.class);
@@ -111,7 +116,8 @@ class AgentChatServiceImplTest {
         when(streamTraceSupport.beginStreamNode(anyString(), anyString())).thenReturn(executionSpan);
         agent = mock(ReActAgent.class);
         service = new AgentChatServiceImpl(agentProvider, conversationService, taskManager, runGate,
-                routePlanner, knowledgeSearchFacade, capabilityService, continuationResolver, workflowStateService,
+                routePlanner, knowledgeSearchFacade, capabilityService, currentTimeService,
+                continuationResolver, workflowStateService,
                 new ObjectMapper().findAndRegisterModules(),
                 traceAuditService, streamTraceSupport);
 
@@ -422,6 +428,33 @@ class AgentChatServiceImplTest {
     }
 
     @Test
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    void shouldExposeOnlyKnowledgeSourceSummaryInsteadOfRawChunkExcerpts() throws Exception {
+        String privateExcerpt = "这是仅供模型生成答案使用的完整知识分片，不应直接展示给用户";
+        when(routePlanner.plan(anyString(), anyBoolean(), any())).thenReturn(new ChatRoutePlan(
+                "leave-policy", "请假制度", IntentKind.KB,
+                RouteResult.of(RouteDecision.SYSTEM, null, "知识库回答", 0.91)));
+        when(conversationService.loadRecentTurns(CONVERSATION_ID, USER_ID, 2)).thenReturn(List.of());
+        when(knowledgeSearchFacade.searchWithEvidence("年假制度是什么", List.of()))
+                .thenReturn(new KnowledgeSearchFacade.KnowledgeAnswer("SUCCESS", "年假制度答案", List.of(
+                        new KnowledgeSearchFacade.Evidence(
+                                "doc-1", "人事制度.md", "chunk-7", 7, privateExcerpt,
+                                "2026.1", java.time.LocalDate.of(2026, 1, 1)))));
+
+        service.streamChat("年假制度是什么", CONVERSATION_ID, new SseEmitter());
+
+        ArgumentCaptor<List> blocks = ArgumentCaptor.forClass(List.class);
+        verify(conversationService, timeout(2_000)).addAssistantMessage(
+                eq(CONVERSATION_ID), eq(USER_ID), eq("年假制度答案"), eq(""),
+                blocks.capture(), eq("m-3003"), eq(com.myagent.agent.enums.AgentMessageStatus.NORMAL));
+        String persistedTimeline = new ObjectMapper().findAndRegisterModules()
+                .writeValueAsString((List<AgentBlock>) blocks.getValue());
+        assertThat(persistedTimeline)
+                .contains("人事制度.md", "2026.1")
+                .doesNotContain(privateExcerpt, "chunk-7");
+    }
+
+    @Test
     void shouldStillFinishStreamWhenDirectAnswerPersistenceFails() throws IOException {
         when(routePlanner.plan(anyString(), anyBoolean(), any())).thenReturn(new ChatRoutePlan(
                 "greeting", "问候", IntentKind.SYSTEM,
@@ -450,6 +483,24 @@ class AgentChatServiceImplTest {
         verify(capabilityService).describe(any());
         verify(conversationService).addAssistantMessage(eq(CONVERSATION_ID), eq(USER_ID),
                 contains("get_leave_balance"), eq(""), any(), eq("m-3003"),
+                eq(com.myagent.agent.enums.AgentMessageStatus.NORMAL));
+    }
+
+    @Test
+    void shouldAnswerModificationFollowUpUsingRecentlyCompletedLeaveContext() {
+        RecentWorkflowContext completedLeave = new RecentWorkflowContext(
+                "leave-approval", WorkflowConversationStatus.COMPLETED);
+        when(workflowStateService.findRecentContext("default", USER_ID, CONVERSATION_ID))
+                .thenReturn(Optional.of(completedLeave));
+        when(routePlanner.plan(eq("能修改吗"), eq(completedLeave), any())).thenReturn(new ChatRoutePlan(
+                "sys-leave-modification", "请假修改说明", IntentKind.SYSTEM,
+                RouteResult.of(RouteDecision.SYSTEM, null, "关联最近完成的请假流程", 1D)));
+
+        service.streamChat("能修改吗", CONVERSATION_ID, new SseEmitter());
+
+        verify(routePlanner).plan(eq("能修改吗"), eq(completedLeave), any());
+        verify(conversationService).addAssistantMessage(eq(CONVERSATION_ID), eq(USER_ID),
+                contains("撤回"), eq(""), any(), eq("m-3003"),
                 eq(com.myagent.agent.enums.AgentMessageStatus.NORMAL));
     }
 }

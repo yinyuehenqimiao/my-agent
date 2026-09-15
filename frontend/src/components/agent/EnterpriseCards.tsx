@@ -43,6 +43,7 @@ export function ActionCard({ actionId, external = false, onChanged }: { actionId
 function SourceCard({ source }: { source: Evidence }) {
   const [content, setContent] = useState(""); const [error, setError] = useState("");
   async function open() {
+    if (!source.chunkId) return;
     try { const s = await enterprise.get<{ content: string }>(`/knowledge/sources/${source.docId}/${source.chunkId}`); setContent(s.content); setError(""); }
     catch (e) { setError(e instanceof Error ? e.message : "来源不可用"); }
   }
@@ -59,6 +60,8 @@ export function EnterpriseToolResult({ raw }: { raw: string }) {
   let result: { status?: string; data?: Action | ErpPendingAction; sources?: Evidence[] };
   try { result = JSON.parse(raw); } catch { return null; }
   if (result.status === "AWAITING_CONFIRMATION" && result.data?.id) return <ActionCard actionId={result.data.id} external={"actionType" in result.data} />;
-  if (Array.isArray(result.sources)) return <div className="mt-3 space-y-3">{result.sources.map(s => <SourceCard key={`${s.docId}:${s.chunkId}`} source={s} />)}</div>;
+  if (Array.isArray(result.sources) && result.sources.some(source => source.chunkId)) {
+    return <div className="mt-3 space-y-3">{result.sources.filter(source => source.chunkId).map(s => <SourceCard key={`${s.docId}:${s.chunkId}`} source={s} />)}</div>;
+  }
   return null;
 }

@@ -8,7 +8,7 @@ export interface ErpPendingAction { id: string; actionType: string; payload: str
 export interface Task { id: string; requestId: string; stage: string; status: string }
 export interface Workday { day: string; working: boolean; description?: string }
 export interface Detail { request: LeaveRequest; tasks: Task[]; timeline: { id: string; event: string; comment: string; createdAt: string }[] }
-export interface Evidence { docId: string; docName: string; chunkId: string; chunkIndex: number; excerpt: string; version: string; effectiveDate?: string }
+export interface Evidence { docId: string; docName: string; chunkId?: string; chunkIndex?: number; excerpt?: string; version: string; effectiveDate?: string; matchedFragments?: number }
 export const labels: Record<string, string> = { DRAFT: "草稿", PENDING_MANAGER: "待主管审批", PENDING_HR: "待人事审批", APPROVED: "已通过", REJECTED: "已拒绝", WITHDRAWN: "已撤回", SUBMIT: "提交申请", APPROVE: "同意审批", REJECT: "拒绝审批", WITHDRAW: "撤回申请", CREATE_LEAVE: "提交请假申请", PENDING: "待确认", DONE: "已执行", CANCELLED: "已取消", EXPIRED: "已过期", MANAGER: "主管", HR: "人事", EMPLOYEE: "员工", ANNUAL: "年假", PERSONAL: "事假", ACTION_CANCELLED: "取消确认" };
 export const label = (value: string) => labels[value] || value;
 const base = "/api/enterprise";

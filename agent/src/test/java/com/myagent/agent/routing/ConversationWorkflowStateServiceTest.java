@@ -51,5 +51,8 @@ class ConversationWorkflowStateServiceTest {
 
         afterRestart.complete("tenant-a", "user-1", "conversation-1");
         assertThat(afterRestart.findContinuation("tenant-a", "user-1", "conversation-1")).isEmpty();
+        assertThat(afterRestart.findRecentContext("tenant-a", "user-1", "conversation-1"))
+                .contains(new RecentWorkflowContext(
+                        "leave-approval", WorkflowConversationStatus.COMPLETED));
     }
 }

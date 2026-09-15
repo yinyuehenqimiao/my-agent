@@ -43,9 +43,49 @@ public class ChatRoutePlanner {
         if (continuation == null) {
             return plan(question, false, identity);
         }
+        if (!isLikelyWorkflowSlotAnswer(question)) {
+            ChatRoutePlan independentPlan = planSingle(question, false, identity);
+            RouteDecision independentDecision = independentPlan.route().getDecision();
+            boolean sameWorkflow = independentDecision == RouteDecision.WORKFLOW
+                    && continuation.workflowDefKey().equals(independentPlan.route().getTarget());
+            if (independentDecision != RouteDecision.CLARIFY && !sameWorkflow) {
+                // 临时查询不改变持久化的工作流状态；下一轮仍可继续补充原流程参数。
+                return independentPlan;
+            }
+        }
         RouteResult route = RouteResult.of(RouteDecision.WORKFLOW, continuation.workflowDefKey(),
                 "继续当前工作流：" + continuation.status().name(), 1D);
         return new ChatRoutePlan(continuation.workflowDefKey(), "进行中的业务流程", IntentKind.WORKFLOW, route);
+    }
+
+    /** 最近非活动流程只参与省略业务对象的追问，不抢占正常的新问题。 */
+    public ChatRoutePlan plan(String question, RecentWorkflowContext recentContext, ExecutionIdentity identity) {
+        if (recentContext != null
+                && "leave-approval".equals(recentContext.workflowDefKey())
+                && isModificationFollowUp(question)) {
+            return new ChatRoutePlan("sys-leave-modification", "请假修改说明", IntentKind.SYSTEM,
+                    RouteResult.of(RouteDecision.SYSTEM, null, "关联最近完成的请假流程", 1D));
+        }
+        return plan(question, false, identity);
+    }
+
+    /**
+     * 工作流收集阶段的自由文本通常是短槽位值。出现明确查询/疑问信号时才调用完整意图分类，
+     * 避免把“旅游”这类理由误当成新业务，也允许用户在填表途中查询制度、余额或权限。
+     */
+    private boolean isLikelyWorkflowSlotAnswer(String question) {
+        if (question == null || question.isBlank()) {
+            return true;
+        }
+        String normalized = question.replaceAll("[\\p{P}\\p{Z}]", "");
+        if (question.contains("?") || question.contains("？")) {
+            return false;
+        }
+        return java.util.stream.Stream.of(
+                        "什么", "多少", "怎么", "如何", "哪些", "哪里", "哪天", "是否", "能否", "可以吗",
+                        "查询", "查看", "制度", "政策", "规定", "规则", "余额", "剩余", "记录", "历史",
+                        "状态", "待办", "权限", "入职", "知识库", "文档")
+                .noneMatch(normalized::contains);
     }
 
     /**
@@ -80,9 +120,18 @@ public class ChatRoutePlanner {
             RouteResult route = routingService.route(null, IntentKind.WORKFLOW, 1D, true, identity);
             return new ChatRoutePlan(null, "待确认业务", IntentKind.WORKFLOW, route);
         }
+        if (isCurrentTimeQuestion(question)) {
+            return new ChatRoutePlan("sys-current-time", "当前时间", IntentKind.SYSTEM,
+                    RouteResult.of(RouteDecision.SYSTEM, null, "服务端标准时间", 1D));
+        }
         if (isCapabilityDiscovery(question)) {
             return new ChatRoutePlan("sys-about-bot", "关于助手", IntentKind.SYSTEM,
                     RouteResult.of(RouteDecision.SYSTEM, null, "运行时能力说明", 1D));
+        }
+        if (isExplicitLeaveApplication(question)) {
+            RouteResult route = routingService.route(
+                    "leave-approval", IntentKind.WORKFLOW, 1D, false, identity);
+            return new ChatRoutePlan("leave-approval", "请假申请", IntentKind.WORKFLOW, route);
         }
         List<NodeScore> candidates;
         try {
@@ -138,6 +187,66 @@ public class ChatRoutePlanner {
                 || normalized.contains("连接哪些系统")
                 || normalized.contains("接入哪些系统")
                 || normalized.contains("连接系统")));
+    }
+
+    /** 当前日期时间属于确定性系统事实，不交给模型推测。 */
+    private boolean isCurrentTimeQuestion(String question) {
+        if (question == null || question.isBlank()) {
+            return false;
+        }
+        String normalized = question.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[\\p{P}\\p{Z}]", "");
+        boolean asksTimeValue = normalized.contains("时间")
+                || normalized.contains("几点")
+                || normalized.contains("日期")
+                || normalized.contains("几号")
+                || normalized.contains("星期几")
+                || normalized.contains("周几");
+        boolean meansNow = normalized.contains("当前")
+                || normalized.contains("现在")
+                || normalized.contains("此刻")
+                || normalized.contains("今天")
+                || normalized.contains("北京时间");
+        return asksTimeValue && meansNow;
+    }
+
+    private boolean isModificationFollowUp(String question) {
+        if (question == null || question.isBlank()) {
+            return false;
+        }
+        String normalized = question.replaceAll("[\\p{P}\\p{Z}]", "");
+        return java.util.stream.Stream.of(
+                        "能修改吗", "可以修改吗", "还能修改吗", "怎么修改", "如何修改", "能改吗", "可以改吗")
+                .anyMatch(normalized::contains);
+    }
+
+    /**
+     * 明确的请假办理入口属于已配置固定流程，在分类模型不可用时仍需可达。
+     * 制度、余额和历史状态问题保留给知识库或只读工具，避免把查询误识别成写流程。
+     */
+    private boolean isExplicitLeaveApplication(String question) {
+        if (question == null || question.isBlank()) {
+            return false;
+        }
+        String normalized = question.replaceAll("[\\p{P}\\p{Z}]", "");
+        if (!normalized.contains("请假") && !normalized.contains("休假")) {
+            return false;
+        }
+        boolean isReadOnlyQuestion = java.util.stream.Stream.of(
+                        "制度", "政策", "规定", "规则", "余额", "剩余", "记录", "历史", "状态", "查询", "查看")
+                .anyMatch(normalized::contains);
+        boolean isNegativeOrApprovalRequest = java.util.stream.Stream.of(
+                        "不想", "不要", "不用", "无需", "取消", "撤回", "批准", "审批", "同意", "驳回")
+                .anyMatch(normalized::contains);
+        if (isReadOnlyQuestion || isNegativeOrApprovalRequest) {
+            return false;
+        }
+        boolean explicitAction = java.util.stream.Stream.of(
+                        "我要请假", "我想请假", "我要休假", "我想休假", "申请请假", "申请休假",
+                        "发起请假", "发起休假", "帮我请假", "帮我休假", "提交请假", "提交休假")
+                .anyMatch(normalized::contains);
+        boolean containsBusinessDate = normalized.matches(".*(?:\\d{1,4}年|\\d{1,2}月|\\d{1,2}[日号]|\\d{1,2}[-/]\\d{1,2}).*");
+        return explicitAction || containsBusinessDate;
     }
 
     private String ambiguityReason(List<NodeScore> candidates) {

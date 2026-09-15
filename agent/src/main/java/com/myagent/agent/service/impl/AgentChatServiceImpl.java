@@ -34,10 +34,12 @@ import com.myagent.agent.routing.ChatRoutePlan;
 import com.myagent.agent.routing.ChatRoutePlanner;
 import com.myagent.agent.routing.ConversationContinuationResolver;
 import com.myagent.agent.routing.ConversationWorkflowStateService;
+import com.myagent.agent.routing.RecentWorkflowContext;
 import com.myagent.agent.routing.WorkflowContinuation;
 import com.myagent.agent.service.AgentChatService;
 import com.myagent.agent.service.AgentCapabilityService;
 import com.myagent.agent.service.AgentConversationService;
+import com.myagent.agent.service.CurrentTimeService;
 import com.myagent.agent.service.handler.AgentRunGate;
 import com.myagent.agent.service.handler.AgentRunHandle;
 import com.myagent.agent.service.handler.AgentStreamEventBridge;
@@ -65,8 +67,10 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -90,6 +94,7 @@ public class AgentChatServiceImpl implements AgentChatService {
     private final ChatRoutePlanner routePlanner;
     private final KnowledgeSearchFacade knowledgeSearchFacade;
     private final AgentCapabilityService capabilityService;
+    private final CurrentTimeService currentTimeService;
     private final ConversationContinuationResolver continuationResolver;
     private final ConversationWorkflowStateService workflowStateService;
     private final ObjectMapper objectMapper;
@@ -154,7 +159,11 @@ public class AgentChatServiceImpl implements AgentChatService {
         if (continuation.isPresent()) {
             plan = routePlanner.plan(question, continuation.get(), identity);
         } else {
-            plan = routePlanner.plan(question, false, identity);
+            Optional<RecentWorkflowContext> recentContext = workflowStateService.findRecentContext(
+                    tenantId, userId, conversationId);
+            plan = recentContext.isPresent()
+                    ? routePlanner.plan(question, recentContext.get(), identity)
+                    : routePlanner.plan(question, false, identity);
         }
         sender.sendEvent(AgentSSEEventType.ROUTE_DECISION.value(), routePayload(plan));
 
@@ -190,9 +199,14 @@ public class AgentChatServiceImpl implements AgentChatService {
         }
         if (decision == RouteDecision.SYSTEM) {
             registerDirect(taskId, userId, title, runHandle);
-            String content = "sys-about-bot".equals(plan.intentCode())
-                    ? capabilityService.describe(identity)
-                    : "你好，我是企业智能助手，可以帮助你查询公司制度、个人信息并办理已配置的业务流程。";
+            String content = switch (StrUtil.blankToDefault(plan.intentCode(), "")) {
+                case "sys-about-bot" -> capabilityService.describe(identity);
+                case "sys-current-time" -> currentTimeService.describe();
+                case "sys-leave-modification" -> "刚才提交的请假不能直接修改。"
+                        + "如需调整，请先查看我的请假申请，并对仍允许撤回的申请发起撤回；撤回成功后再重新提交正确的日期或原因。"
+                        + "如果申请已经审批完成或当前状态不允许撤回，请联系直属主管或 HR 处理。";
+                default -> "你好，我是企业智能助手，可以帮助你查询公司制度、个人信息并办理已配置的业务流程。";
+            };
             completeDirect(runHandle, conversationId, userId, title, questionMessageId,
                     content, false);
             return;
@@ -373,8 +387,11 @@ public class AgentChatServiceImpl implements AgentChatService {
                                    String replyToMessageId, KnowledgeSearchFacade.KnowledgeAnswer answer) {
         String evidenceJson;
         try {
+            List<KnowledgeSourceSummary> sourceSummaries = summarizeKnowledgeSources(answer.sources());
             evidenceJson = objectMapper.writeValueAsString(Map.of(
-                    "status", answer.status(), "sources", answer.sources()));
+                    "status", answer.status(),
+                    "summary", "已参考 " + sourceSummaries.size() + " 份文档",
+                    "sources", sourceSummaries));
         } catch (Exception error) {
             log.warn("知识来源序列化失败, conversationId: {}", conversationId, error);
             evidenceJson = "{\"status\":\"SOURCE_SERIALIZATION_FAILED\",\"sources\":[]}";
@@ -402,6 +419,30 @@ public class AgentChatServiceImpl implements AgentChatService {
                     new AgentCompletionPayload(messageId, title, AgentMessageStatus.NORMAL.name()));
             runHandle.getSender().sendEvent(AgentSSEEventType.DONE.value(), "[DONE]");
         });
+    }
+
+    /**
+     * 检索分片只供模型组织答案，用户侧仅展示按文档聚合的来源摘要。
+     * 这样既保留可追溯性，也避免把相邻分片正文和内部 chunk 标识直接铺到聊天界面。
+     */
+    private List<KnowledgeSourceSummary> summarizeKnowledgeSources(
+            List<KnowledgeSearchFacade.Evidence> sources) {
+        Map<String, KnowledgeSourceSummary> summaries = new LinkedHashMap<>();
+        for (KnowledgeSearchFacade.Evidence source : sources) {
+            String key = StrUtil.blankToDefault(source.docId(), source.docName());
+            summaries.compute(key, (ignored, existing) -> existing == null
+                    ? new KnowledgeSourceSummary(
+                            source.docId(), source.docName(), source.version(), source.effectiveDate(), 1)
+                    : existing.withAdditionalMatch());
+        }
+        return List.copyOf(summaries.values());
+    }
+
+    private record KnowledgeSourceSummary(String docId, String docName, String version,
+                                          LocalDate effectiveDate, int matchedFragments) {
+        private KnowledgeSourceSummary withAdditionalMatch() {
+            return new KnowledgeSourceSummary(docId, docName, version, effectiveDate, matchedFragments + 1);
+        }
     }
 
     private String persistDirectAnswer(String conversationId, String userId, String replyToMessageId,

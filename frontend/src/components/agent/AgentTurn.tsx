@@ -370,6 +370,18 @@ function summarize(json: unknown, text: string): string {
   }
   if (Array.isArray(json)) return `数组 · ${json.length} 项`;
   if (typeof json === "object") {
+    const value = json as {
+      summary?: unknown;
+      sources?: Array<{ docName?: unknown }>;
+    };
+    if (typeof value.summary === "string" && Array.isArray(value.sources)) {
+      const names = value.sources
+        .map((source) => (typeof source?.docName === "string" ? source.docName : ""))
+        .filter(Boolean)
+        .slice(0, 3);
+      const suffix = names.length > 0 ? ` · ${names.join("、")}` : "";
+      return `${value.summary}${suffix}${value.sources.length > names.length ? "…" : ""}`;
+    }
     const compact = JSON.stringify(json);
     if (compact.length <= 96) return compact;
     const keys = Object.keys(json as object);

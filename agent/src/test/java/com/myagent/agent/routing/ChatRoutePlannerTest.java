@@ -14,6 +14,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -72,6 +73,30 @@ class ChatRoutePlannerTest {
         assertThat(plan.intentKind()).isEqualTo(IntentKind.SYSTEM);
         assertThat(plan.route().getDecision()).isEqualTo(RouteDecision.SYSTEM);
         verifyNoInteractions(classifier, routingService);
+    }
+
+    @Test
+    void shouldRouteCurrentTimeQuestionWithoutCallingTheIntentModel() {
+        ChatRoutePlan plan = planner.plan("当前时间是什么时候", false, identity);
+
+        assertThat(plan.intentCode()).isEqualTo("sys-current-time");
+        assertThat(plan.intentKind()).isEqualTo(IntentKind.SYSTEM);
+        assertThat(plan.route().getDecision()).isEqualTo(RouteDecision.SYSTEM);
+        verifyNoInteractions(classifier, routingService);
+    }
+
+    @Test
+    void shouldRouteExplicitLeaveApplicationWithoutCallingTheIntentModel() {
+        when(routingService.route("leave-approval", IntentKind.WORKFLOW, 1D, false, identity))
+                .thenReturn(RouteResult.of(
+                        RouteDecision.WORKFLOW, "leave-approval", "高置信固定流程", 1D));
+
+        ChatRoutePlan plan = planner.plan("请假26年9月20日-22日", false, identity);
+
+        assertThat(plan.intentCode()).isEqualTo("leave-approval");
+        assertThat(plan.intentKind()).isEqualTo(IntentKind.WORKFLOW);
+        assertThat(plan.route().getDecision()).isEqualTo(RouteDecision.WORKFLOW);
+        verifyNoInteractions(classifier);
     }
 
     @Test
@@ -160,6 +185,61 @@ class ChatRoutePlannerTest {
         assertThat(plan.route().getTarget()).isEqualTo("leave-approval");
         assertThat(plan.route().getReason()).contains("继续当前工作流");
         verifyNoInteractions(classifier, routingService);
+    }
+
+    @Test
+    void shouldTemporarilyAnswerKnowledgeQuestionWithoutDiscardingActiveWorkflow() {
+        WorkflowContinuation continuation = new WorkflowContinuation(
+                "leave-approval", WorkflowConversationStatus.COLLECTING_PARAMETERS);
+        when(classifier.classifyTargets("公司的请假制度是什么"))
+                .thenReturn(List.of(score("group-hr-policy", IntentKind.KB, 0.95)));
+        when(routingService.route("group-hr-policy", IntentKind.KB, 0.95, false, identity))
+                .thenReturn(RouteResult.of(RouteDecision.SYSTEM, null, "知识库回答", 0.95));
+
+        ChatRoutePlan plan = planner.plan("公司的请假制度是什么", continuation, identity);
+
+        assertThat(plan.route().getDecision()).isEqualTo(RouteDecision.SYSTEM);
+        assertThat(plan.intentCode()).isEqualTo("group-hr-policy");
+        assertThat(plan.intentKind()).isEqualTo(IntentKind.KB);
+    }
+
+    @Test
+    void shouldResolveModificationFollowUpFromRecentlyCompletedLeaveWorkflow() {
+        RecentWorkflowContext completedLeave = new RecentWorkflowContext(
+                "leave-approval", WorkflowConversationStatus.COMPLETED);
+
+        ChatRoutePlan plan = planner.plan("能修改吗", completedLeave, identity);
+
+        assertThat(plan.route().getDecision()).isEqualTo(RouteDecision.SYSTEM);
+        assertThat(plan.intentCode()).isEqualTo("sys-leave-modification");
+        assertThat(plan.intentName()).isEqualTo("请假修改说明");
+        verifyNoInteractions(classifier, routingService);
+    }
+
+    @Test
+    void shouldDetourToRagAndReactThenResumeTheSameWorkflowSlot() {
+        WorkflowContinuation collecting = new WorkflowContinuation(
+                "leave-approval", WorkflowConversationStatus.COLLECTING_PARAMETERS);
+        when(classifier.classifyTargets("公司的请假制度是什么"))
+                .thenReturn(List.of(score("group-hr-policy", IntentKind.KB, 0.95)));
+        when(routingService.route("group-hr-policy", IntentKind.KB, 0.95, false, identity))
+                .thenReturn(RouteResult.of(RouteDecision.SYSTEM, null, "知识库回答", 0.95));
+        when(classifier.classifyTargets("我的年假还有多少"))
+                .thenReturn(List.of(score("employee-self", IntentKind.MCP, 0.96)));
+        when(routingService.route("employee-self", IntentKind.MCP, 0.96, false, identity))
+                .thenReturn(RouteResult.of(RouteDecision.REACT, "default", "授权 ReAct", 0.96));
+
+        ChatRoutePlan policy = planner.plan("公司的请假制度是什么", collecting, identity);
+        ChatRoutePlan balance = planner.plan("我的年假还有多少", collecting, identity);
+        ChatRoutePlan reason = planner.plan("我请假的理由是旅游", collecting, identity);
+
+        assertThat(policy.route().getDecision()).isEqualTo(RouteDecision.SYSTEM);
+        assertThat(policy.intentName()).isEqualTo("group-hr-policy");
+        assertThat(balance.route().getDecision()).isEqualTo(RouteDecision.REACT);
+        assertThat(balance.intentName()).isEqualTo("employee-self");
+        assertThat(reason.route().getDecision()).isEqualTo(RouteDecision.WORKFLOW);
+        assertThat(reason.route().getTarget()).isEqualTo("leave-approval");
+        verify(classifier, never()).classifyTargets("我请假的理由是旅游");
     }
 
     private NodeScore score(String id, IntentKind kind, double score) {
