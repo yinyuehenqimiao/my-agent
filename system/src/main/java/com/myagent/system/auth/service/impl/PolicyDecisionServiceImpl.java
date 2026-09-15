@@ -62,19 +62,22 @@ public class PolicyDecisionServiceImpl implements com.myagent.system.auth.servic
     @Override
     public void requirePermission(ExecutionIdentity identity, String permCode) {
         if (!hasPermission(identity, permCode)) {
-            auditDeny(identity, permCode, "缺少权限码: " + permCode);
+            auditDecision(identity, permCode, "DENY", "缺少权限码: " + permCode);
             throw new ClientException("无权限: " + permCode);
+        }
+        if (!auditDecision(identity, permCode, "ALLOW", "权限校验通过")) {
+            throw new ClientException("权限审计不可用，为保护系统安全，本次操作已阻断");
         }
     }
 
     @Override
     public void requireNotSelfReview(ExecutionIdentity reviewer, String submitterId) {
         if (reviewer == null || reviewer.getUserId() == null || submitterId == null) {
-            auditDeny(reviewer, "workflow:review", "审核身份或提交者缺失");
+            auditDecision(reviewer, "workflow:review", "DENY", "审核身份或提交者缺失");
             throw new ClientException("审核身份缺失");
         }
         if (reviewer.getUserId().equals(submitterId)) {
-            auditDeny(reviewer, "workflow:review", "编辑者不得审核自己提交的工作流");
+            auditDecision(reviewer, "workflow:review", "DENY", "编辑者不得审核自己提交的工作流");
             throw new ClientException("不得审核自己提交的工作流");
         }
     }
@@ -109,7 +112,7 @@ public class PolicyDecisionServiceImpl implements com.myagent.system.auth.servic
     }
 
     /** 记录权限拒绝到审计表；记录失败不影响主流程 */
-    private void auditDeny(ExecutionIdentity identity, String permCode, String reason) {
+    private boolean auditDecision(ExecutionIdentity identity, String permCode, String action, String reason) {
         try {
             String currentTraceId = RagTraceContext.getTraceId();
             String traceId = currentTraceId == null || currentTraceId.isBlank()
@@ -120,11 +123,13 @@ public class PolicyDecisionServiceImpl implements com.myagent.system.auth.servic
                     identity == null ? null : identity.getUserId(),
                     identity == null ? null : identity.getUsername(),
                     identity == null ? "default" : identity.getTenantId(),
-                    permCode, "DENY", reason, traceId);
+                    permCode, action, reason, traceId);
+            return true;
         } catch (Exception e) {
             long failures = auditWriteFailures.incrementAndGet();
             log.error("security_audit_write_failure count={} permCode={} error={}",
                     failures, permCode, e.getMessage());
+            return false;
         }
     }
 

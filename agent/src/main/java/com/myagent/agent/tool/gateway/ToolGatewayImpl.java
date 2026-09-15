@@ -100,13 +100,11 @@ public class ToolGatewayImpl implements ToolGateway {
         }
         // 5. 权限判断（默认拒绝）
         if (def.getPermissionCode() != null && !def.getPermissionCode().isBlank()) {
-            if (!policyDecisionService.hasPermission(identity, def.getPermissionCode())) {
-                try {
-                    policyDecisionService.requirePermission(identity, def.getPermissionCode());
-                } catch (ClientException ex) {
-                    audit(invocation, traceId, "DENY", "权限拒绝: " + def.getPermissionCode());
-                    return ToolResult.error("FORBIDDEN", "无权限", traceId);
-                }
+            try {
+                // 强制鉴权入口同时持久化 ALLOW/DENY；安全审计不可用时 requirePermission 会 fail-closed。
+                policyDecisionService.requirePermission(identity, def.getPermissionCode());
+            } catch (ClientException ex) {
+                audit(invocation, traceId, "DENY", "权限或权限审计拒绝: " + def.getPermissionCode());
                 return ToolResult.error("FORBIDDEN", "无权限", traceId);
             }
         }

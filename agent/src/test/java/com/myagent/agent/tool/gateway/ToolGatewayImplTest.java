@@ -107,6 +107,21 @@ class ToolGatewayImplTest {
     }
 
     @Test
+    void permissionAuditFailureBlocksToolExecution() throws Exception {
+        var handler = mock(com.myagent.framework.tool.ToolHandler.class);
+        gateway.register(readOnlyDef("ro", "workflow:view"), handler);
+        when(policy.hasPermission(any(), eq("workflow:view"))).thenReturn(true);
+        doThrow(new ClientException("权限审计不可用")).when(policy)
+                .requirePermission(any(), eq("workflow:view"));
+
+        ToolResult result = gateway.invoke(ToolInvocation.builder().toolName("ro")
+                .identity(identity("u")).source(Source.REACT).input(Map.of("q", "x")).build());
+
+        assertEquals("FORBIDDEN", result.getErrorCode());
+        verifyNoInteractions(handler);
+    }
+
+    @Test
     void missingRequiredInputRejected() {
         gateway.register(readOnlyDef("ro", null), inv -> ToolResult.success("ok", inv.getTraceId()));
         ToolResult r = gateway.invoke(ToolInvocation.builder().toolName("ro").identity(identity("u")).source(Source.REACT).input(Map.of()).build());

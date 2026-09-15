@@ -200,12 +200,13 @@ class PolicyDecisionServiceTest {
     }
 
     @Test void auditStorageFailureIsObservableAndPermissionStillFailsClosed() {
+        long failuresBefore = ((PolicyDecisionServiceImpl) policy).auditWriteFailureCount();
         jdbc.execute("DROP TABLE sys_auth_audit");
         LoginUser editor = identity(editorUser, "editor", "EMPLOYEE");
 
         assertThrows(ClientException.class, () -> policy.requirePermission(editor, "workflow:review"));
 
-        assertEquals(1L, ((PolicyDecisionServiceImpl) policy).auditWriteFailureCount());
+        assertEquals(failuresBefore + 1L, ((PolicyDecisionServiceImpl) policy).auditWriteFailureCount());
     }
 
     @Test void permissionDenyAuditReusesCurrentRequestTrace() {
@@ -218,5 +219,29 @@ class PolicyDecisionServiceTest {
                 "SELECT trace_id FROM sys_auth_audit WHERE action='DENY' AND perm_code='workflow:review'",
                 String.class);
         assertEquals("request-trace-2", traceId);
+    }
+
+    @Test void permissionAllowAuditReusesCurrentRequestTrace() {
+        LoginUser editor = identity(editorUser, "editor", "EMPLOYEE");
+        RagTraceContext.setTraceId("request-trace-allow");
+
+        assertDoesNotThrow(() -> policy.requirePermission(editor, "workflow:edit"));
+
+        String traceId = jdbc.queryForObject(
+                "SELECT trace_id FROM sys_auth_audit WHERE action='ALLOW' AND perm_code='workflow:edit'",
+                String.class);
+        assertEquals("request-trace-allow", traceId);
+    }
+
+    @Test void permissionAllowFailsClosedWhenSecurityAuditCannotPersist() {
+        LoginUser editor = identity(editorUser, "editor", "EMPLOYEE");
+        long failuresBefore = ((PolicyDecisionServiceImpl) policy).auditWriteFailureCount();
+        jdbc.execute("DROP TABLE sys_auth_audit");
+
+        ClientException error = assertThrows(ClientException.class,
+                () -> policy.requirePermission(editor, "workflow:edit"));
+
+        assertTrue(error.getMessage().contains("审计"));
+        assertEquals(failuresBefore + 1L, ((PolicyDecisionServiceImpl) policy).auditWriteFailureCount());
     }
 }
