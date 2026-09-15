@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myagent.agent.config.ReActAgentProvider;
 import com.myagent.agent.config.ReActAgentProvider.ActiveAgent;
 import com.myagent.agent.service.AgentConversationService;
+import com.myagent.agent.service.AgentCapabilityService;
 import com.myagent.agent.service.handler.AgentRunGate;
 import com.myagent.agent.tool.AgentToolCatalog.ResolvedCatalog;
 import com.myagent.agent.routing.ChatRoutePlan;
@@ -83,6 +84,7 @@ class AgentChatServiceImplTest {
     private AgentRunGate runGate;
     private ChatRoutePlanner routePlanner;
     private KnowledgeSearchFacade knowledgeSearchFacade;
+    private AgentCapabilityService capabilityService;
     private ConversationContinuationResolver continuationResolver;
     private ConversationWorkflowStateService workflowStateService;
     private RagTraceAuditService traceAuditService;
@@ -100,6 +102,7 @@ class AgentChatServiceImplTest {
         runGate = mock(AgentRunGate.class);
         routePlanner = mock(ChatRoutePlanner.class);
         knowledgeSearchFacade = mock(KnowledgeSearchFacade.class);
+        capabilityService = mock(AgentCapabilityService.class);
         continuationResolver = mock(ConversationContinuationResolver.class);
         workflowStateService = mock(ConversationWorkflowStateService.class);
         traceAuditService = mock(RagTraceAuditService.class);
@@ -108,7 +111,7 @@ class AgentChatServiceImplTest {
         when(streamTraceSupport.beginStreamNode(anyString(), anyString())).thenReturn(executionSpan);
         agent = mock(ReActAgent.class);
         service = new AgentChatServiceImpl(agentProvider, conversationService, taskManager, runGate,
-                routePlanner, knowledgeSearchFacade, continuationResolver, workflowStateService,
+                routePlanner, knowledgeSearchFacade, capabilityService, continuationResolver, workflowStateService,
                 new ObjectMapper().findAndRegisterModules(),
                 traceAuditService, streamTraceSupport);
 
@@ -433,5 +436,20 @@ class AgentChatServiceImplTest {
         verify(taskManager).unregister(anyString());
         // meta + route + message + finish + done；落库失败不能让前端停在生成中。
         verify(emitter, times(5)).send(any(SseEmitter.SseEventBuilder.class));
+    }
+
+    @Test
+    void shouldDescribeConnectedCapabilitiesForAboutBotIntent() {
+        when(routePlanner.plan(anyString(), anyBoolean(), any())).thenReturn(new ChatRoutePlan(
+                "sys-about-bot", "关于助手", IntentKind.SYSTEM,
+                RouteResult.of(RouteDecision.SYSTEM, null, "系统回答", 0.99)));
+        when(capabilityService.describe(any())).thenReturn("当前可用：我的年假余额（get_leave_balance）");
+
+        service.streamChat("你都有什么工具可用", CONVERSATION_ID, new SseEmitter());
+
+        verify(capabilityService).describe(any());
+        verify(conversationService).addAssistantMessage(eq(CONVERSATION_ID), eq(USER_ID),
+                contains("get_leave_balance"), eq(""), any(), eq("m-3003"),
+                eq(com.myagent.agent.enums.AgentMessageStatus.NORMAL));
     }
 }

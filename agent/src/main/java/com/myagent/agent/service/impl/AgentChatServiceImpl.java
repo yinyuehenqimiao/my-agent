@@ -36,6 +36,7 @@ import com.myagent.agent.routing.ConversationContinuationResolver;
 import com.myagent.agent.routing.ConversationWorkflowStateService;
 import com.myagent.agent.routing.WorkflowContinuation;
 import com.myagent.agent.service.AgentChatService;
+import com.myagent.agent.service.AgentCapabilityService;
 import com.myagent.agent.service.AgentConversationService;
 import com.myagent.agent.service.handler.AgentRunGate;
 import com.myagent.agent.service.handler.AgentRunHandle;
@@ -88,6 +89,7 @@ public class AgentChatServiceImpl implements AgentChatService {
     private final AgentRunGate runGate;
     private final ChatRoutePlanner routePlanner;
     private final KnowledgeSearchFacade knowledgeSearchFacade;
+    private final AgentCapabilityService capabilityService;
     private final ConversationContinuationResolver continuationResolver;
     private final ConversationWorkflowStateService workflowStateService;
     private final ObjectMapper objectMapper;
@@ -188,8 +190,11 @@ public class AgentChatServiceImpl implements AgentChatService {
         }
         if (decision == RouteDecision.SYSTEM) {
             registerDirect(taskId, userId, title, runHandle);
+            String content = "sys-about-bot".equals(plan.intentCode())
+                    ? capabilityService.describe(identity)
+                    : "你好，我是企业智能助手，可以帮助你查询公司制度、个人信息并办理已配置的业务流程。";
             completeDirect(runHandle, conversationId, userId, title, questionMessageId,
-                    "你好，我是企业智能助手，可以帮助你查询公司制度、个人信息并办理已配置的业务流程。", false);
+                    content, false);
             return;
         }
 

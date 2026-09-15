@@ -73,6 +73,9 @@ class AgentToolCatalogTest {
         assertThat(toolkit.getTool("sales_query").getDescription()).isEqualTo("查询实时销售数据");
         assertThat(resolved.displayNameOf("sales_query")).isEqualTo("销售查询");
         assertThat(catalog.mcpToolCount()).isEqualTo(1);
+        assertThat(catalog.listAvailableMcpTools())
+                .containsExactly(new AgentToolCatalog.ConnectedTool(
+                        "sales_query", "销售查询", "查询实时销售数据"));
         assertThat(resolved.fingerprint().knowledgeToolDescription())
                 .isEqualTo("当前 Agent 的知识库工具描述");
         assertThat(resolved.fingerprint().mcpTools())

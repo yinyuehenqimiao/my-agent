@@ -284,6 +284,8 @@ public class IntentTreeFactory {
                         "你是谁",
                         "你是做什么的",
                         "你能帮我做什么",
+                        "你都有什么工具可用",
+                        "我能用你连接哪些系统",
                         "你是什么AI"
                 ))
                 .kind(IntentKind.SYSTEM)

@@ -125,6 +125,14 @@ public class AgentToolCatalog {
         return resolveMcpToolBindings(new ArrayList<>()).size();
     }
 
+    /** 当前意图树与 MCP 注册表共同确认可用的外部工具，用于面向用户的能力发现。 */
+    public List<ConnectedTool> listAvailableMcpTools() {
+        return resolveMcpToolBindings(new ArrayList<>()).stream()
+                .map(binding -> new ConnectedTool(
+                        binding.toolId(), binding.displayName(), binding.description()))
+                .toList();
+    }
+
     private String resolveKnowledgeToolDescription() {
         String description = agentPromptResolver.resolve(AgentPromptSlot.KNOWLEDGE_TOOL_DESCRIPTION);
         if (StrUtil.isBlank(description)) {
@@ -180,6 +188,9 @@ public class AgentToolCatalog {
             String displayName,
             String description,
             McpToolExecutor executor) {
+    }
+
+    public record ConnectedTool(String toolId, String displayName, String description) {
     }
 
     /**
