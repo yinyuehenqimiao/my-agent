@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AUDIT_CATEGORY_LABEL, AUDIT_EVENT_LABEL } from "@/services/workflowService";
-import { traceAuditService, type TraceDetail, type TraceFilters, type TraceRun } from "@/services/traceAuditService";
+import { traceAuditService, type AuditHealth, type TraceDetail, type TraceFilters, type TraceRun } from "@/services/traceAuditService";
 import { getErrorMessage } from "@/utils/error";
 
 const initialFilters: TraceFilters = { traceId: "", userId: "", conversationId: "", taskId: "", status: "", current: 1, size: 20 };
@@ -20,6 +20,7 @@ export function TraceAuditPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState<TraceDetail | null>(null);
+  const [health, setHealth] = useState<AuditHealth | null>(null);
 
   const load = async (next: TraceFilters) => {
     setLoading(true);
@@ -30,7 +31,11 @@ export function TraceAuditPage() {
     } catch (error) { toast.error(getErrorMessage(error, "加载推理链路失败")); }
     finally { setLoading(false); }
   };
-  useEffect(() => { void load(initialFilters); }, []);
+  useEffect(() => {
+    void load(initialFilters);
+    traceAuditService.getHealth().then(setHealth)
+      .catch((error) => toast.error(getErrorMessage(error, "加载审计健康状态失败")));
+  }, []);
   const update = (key: keyof TraceFilters, value: string) => setFilters((current) => ({ ...current, [key]: value }));
   const openDetail = async (traceId: string) => {
     try { setDetail(await traceAuditService.getDetail(traceId)); }
@@ -40,6 +45,14 @@ export function TraceAuditPage() {
   return <div className="space-y-4 p-4">
     <div><h2 className="flex items-center gap-2 text-lg font-semibold"><Activity className="h-5 w-5" /> 推理链路审计</h2>
       <p className="mt-1 text-sm text-slate-500">按租户隔离查询路由、意图、Workflow、ReAct、工具调用和权限判定的完整链路。</p></div>
+    {health && <Card className={health.status === "UP" ? "border-emerald-200" : "border-amber-300 bg-amber-50/60"}><CardContent className="flex flex-wrap items-center gap-3 p-4 text-sm">
+      <Badge variant={health.status === "UP" ? "default" : "destructive"}>{health.status}</Badge>
+      <span className="font-medium">{health.status === "UP" ? "审计持久化正常" : "审计持久化异常"}</span>
+      <span className="text-slate-500">推理 {health.reasoningTraceWriteFailures}</span>
+      <span className="text-slate-500">工具 {health.toolAuditWriteFailures}</span>
+      <span className="text-slate-500">权限 {health.securityAuditWriteFailures}</span>
+      {health.status === "DEGRADED" && <span className="ml-auto text-amber-700">请检查数据库与告警日志；写操作可能已按安全策略阻断。</span>}
+    </CardContent></Card>}
     <Card><CardContent className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-6">
       <Input aria-label="链路标识" placeholder="traceId" value={filters.traceId} onChange={(event) => update("traceId", event.target.value)} />
       <Input aria-label="用户标识" placeholder="用户 ID" value={filters.userId} onChange={(event) => update("userId", event.target.value)} />

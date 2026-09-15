@@ -23,6 +23,12 @@ export interface TraceFilters {
   traceId?: string; conversationId?: string; taskId?: string; userId?: string;
   status?: string; current?: number; size?: number;
 }
+export interface AuditHealth {
+  status: "UP" | "DEGRADED";
+  reasoningTraceWriteFailures: number;
+  toolAuditWriteFailures: number;
+  securityAuditWriteFailures: number;
+}
 
 export const traceAuditService = {
   listRuns: (filters: TraceFilters = {}) => {
@@ -34,4 +40,5 @@ export const traceAuditService = {
   },
   getDetail: (traceId: string) =>
     api.get<TraceDetail>(`/rag/traces/runs/${encodeURIComponent(traceId)}`),
+  getHealth: () => api.get<AuditHealth>("/api/admin/audit/health"),
 };

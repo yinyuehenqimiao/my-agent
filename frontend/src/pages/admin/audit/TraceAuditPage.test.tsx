@@ -2,10 +2,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ listRuns: vi.fn(), getDetail: vi.fn() }));
+const mocks = vi.hoisted(() => ({ listRuns: vi.fn(), getDetail: vi.fn(), getHealth: vi.fn() }));
 
 vi.mock("@/services/traceAuditService", () => ({
-  traceAuditService: { listRuns: mocks.listRuns, getDetail: mocks.getDetail },
+  traceAuditService: { listRuns: mocks.listRuns, getDetail: mocks.getDetail, getHealth: mocks.getHealth },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
 
@@ -27,12 +27,18 @@ describe("推理链路审计页", () => {
       nodes: [{ nodeId: "node-1", nodeType: "INTENT", nodeName: "意图识别", status: "SUCCESS", depth: 0, durationMs: 8 }],
       events: [{ id: "event-1", category: "TOOL", eventCode: "TOOL_EXECUTION", actorId: "employee", targetType: "tool", targetId: "get_leave_balance", traceId: "trace-1", detail: "phase=COMPLETED", createdTime: "2026-09-15T09:00:01" }],
     });
+    mocks.getHealth.mockResolvedValue({
+      status: "DEGRADED", reasoningTraceWriteFailures: 2,
+      toolAuditWriteFailures: 1, securityAuditWriteFailures: 3,
+    });
   });
   afterEach(cleanup);
 
   it("按组合条件查询并展开同一 trace 的推理与跨域事件", async () => {
     render(<TraceAuditPage />);
     expect(await screen.findByText("查询我的年假")).toBeTruthy();
+    expect(await screen.findByText("审计持久化异常")).toBeTruthy();
+    expect(screen.getByText("推理 2")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("链路标识"), { target: { value: "trace-1" } });
     fireEvent.change(screen.getByLabelText("用户标识"), { target: { value: "employee" } });
