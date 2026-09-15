@@ -17,6 +17,7 @@ import { WorkflowDesignerPage } from "@/pages/admin/workflow/WorkflowDesignerPag
 import { ToolCenterPage, AuditPage, RouteSimulationPage } from "@/pages/admin/workflow/WorkflowAdminPages";
 import { AgentProfilePage } from "@/pages/admin/agents/AgentProfilePage";
 import { AgentPromptPage } from "@/pages/admin/agents/AgentPromptPage";
+import { TraceAuditPage } from "@/pages/admin/audit/TraceAuditPage";
 import { useAuthStore } from "@/stores/authStore";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -157,6 +158,10 @@ export const router = createBrowserRouter([
       {
         path: "workflow/audit",
         element: <AuditPage />
+      },
+      {
+        path: "workflow/traces",
+        element: <TraceAuditPage />
       }
     ]
   },

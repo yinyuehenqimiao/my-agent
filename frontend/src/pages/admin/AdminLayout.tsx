@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
+  Activity,
   Bot,
   ChevronDown,
   ChevronRight,
@@ -80,7 +81,8 @@ const menuItems: MenuItem[] = [
       { path: "/admin/workflow", label: "工作流列表", icon: GitBranch },
       { path: "/admin/workflow/tools", label: "工具与连接器", icon: Wrench },
       { path: "/admin/workflow/simulate", label: "路由模拟", icon: ClipboardList },
-      { path: "/admin/workflow/audit", label: "审计查询", icon: Shield }
+      { path: "/admin/workflow/audit", label: "审计查询", icon: Shield },
+      { path: "/admin/workflow/traces", label: "推理链路", icon: Activity }
     ]
   }
 ];
@@ -94,7 +96,8 @@ const breadcrumbMap: Record<string, string> = {
   workflow: "工作流中心",
   "workflow/tools": "工具与连接器",
   "workflow/simulate": "路由模拟",
-  "workflow/audit": "审计查询"
+  "workflow/audit": "审计查询",
+  "workflow/traces": "推理链路"
 };
 
 export function AdminLayout() {
