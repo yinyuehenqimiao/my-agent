@@ -31,6 +31,7 @@ import com.myagent.framework.context.UserContext;
 import com.myagent.framework.exception.ClientException;
 import com.myagent.framework.routing.RouteDecision;
 import com.myagent.framework.routing.RouteResult;
+import com.myagent.framework.trace.RagStreamTraceSupport;
 import com.myagent.framework.web.StreamTaskManager;
 import com.myagent.rag.enums.IntentKind;
 import com.myagent.rag.service.KnowledgeSearchFacade;
@@ -80,6 +81,8 @@ class AgentChatServiceImplTest {
     private KnowledgeSearchFacade knowledgeSearchFacade;
     private EnterprisePendingActionResolver pendingActionResolver;
     private RagTraceAuditService traceAuditService;
+    private RagStreamTraceSupport streamTraceSupport;
+    private RagStreamTraceSupport.StreamSpan executionSpan;
     private AtomicInteger gateReleased;
     private ReActAgent agent;
     private AgentChatServiceImpl service;
@@ -94,10 +97,13 @@ class AgentChatServiceImplTest {
         knowledgeSearchFacade = mock(KnowledgeSearchFacade.class);
         pendingActionResolver = mock(EnterprisePendingActionResolver.class);
         traceAuditService = mock(RagTraceAuditService.class);
+        streamTraceSupport = mock(RagStreamTraceSupport.class);
+        executionSpan = mock(RagStreamTraceSupport.StreamSpan.class);
+        when(streamTraceSupport.beginStreamNode(anyString(), anyString())).thenReturn(executionSpan);
         agent = mock(ReActAgent.class);
         service = new AgentChatServiceImpl(agentProvider, conversationService, taskManager, runGate,
                 routePlanner, knowledgeSearchFacade, pendingActionResolver, new ObjectMapper().findAndRegisterModules(),
-                traceAuditService);
+                traceAuditService, streamTraceSupport);
 
         gateReleased = new AtomicInteger();
         when(runGate.acquire(anyString(), anyString(), anyString())).thenReturn(gateReleased::incrementAndGet);
@@ -297,6 +303,9 @@ class AgentChatServiceImplTest {
         assertThat(run.getValue().getExtraData()).contains("查询我的年假");
         verify(traceAuditService).finishRun(eq(run.getValue().getTraceId()), eq("SUCCESS"),
                 org.mockito.ArgumentMatchers.isNull(), any(), anyLong());
+        verify(streamTraceSupport).beginStreamNode("react-agent:default", "REACT");
+        verify(executionSpan).finishSuccess();
+        verify(executionSpan).detach();
     }
 
     @Test
@@ -310,6 +319,7 @@ class AgentChatServiceImplTest {
         verify(traceAuditService).startRun(run.capture());
         verify(traceAuditService).finishRun(eq(run.getValue().getTraceId()), eq("ERROR"),
                 contains("模型流失败"), any(), anyLong());
+        verify(executionSpan).finishError(any(Throwable.class));
     }
 
     @Test
@@ -325,6 +335,7 @@ class AgentChatServiceImplTest {
         verify(traceAuditService).startRun(run.capture());
         verify(traceAuditService).finishRun(eq(run.getValue().getTraceId()), eq("CANCELLED"),
                 org.mockito.ArgumentMatchers.isNull(), any(), anyLong());
+        verify(executionSpan).finishCancelledIfRunning();
     }
 
     @Test
@@ -355,6 +366,8 @@ class AgentChatServiceImplTest {
 
         verify(agentProvider).getWorkflowAgent("leave-approval");
         verify(agentProvider, never()).getAgent();
+        verify(streamTraceSupport).beginStreamNode("workflow-agent:leave-approval", "WORKFLOW");
+        verify(executionSpan).finishSuccess();
     }
 
     @Test

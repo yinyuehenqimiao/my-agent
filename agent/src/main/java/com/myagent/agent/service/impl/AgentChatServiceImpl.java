@@ -42,6 +42,7 @@ import com.myagent.framework.context.UserContext;
 import com.myagent.framework.context.LoginUser;
 import com.myagent.framework.routing.RouteDecision;
 import com.myagent.framework.trace.RagTraceContext;
+import com.myagent.framework.trace.RagStreamTraceSupport;
 import com.myagent.framework.web.SseEmitterSender;
 import com.myagent.framework.web.StreamTaskManager;
 import com.myagent.rag.dao.entity.RagTraceRunDO;
@@ -87,6 +88,7 @@ public class AgentChatServiceImpl implements AgentChatService {
     private final EnterprisePendingActionResolver pendingActionResolver;
     private final ObjectMapper objectMapper;
     private final RagTraceAuditService traceAuditService;
+    private final RagStreamTraceSupport streamTraceSupport;
 
     @Override
     public void streamChat(String question, String conversationId, SseEmitter emitter) {
@@ -187,8 +189,31 @@ public class AgentChatServiceImpl implements AgentChatService {
             sender.sendEvent(AgentSSEEventType.WORKFLOW_PROGRESS.value(), Map.of(
                     "workflowDefKey", plan.route().getTarget(), "node", "参数收集与确认", "status", "RUNNING"));
         }
-        startAgentRun(question, userId, conversationId, taskId, title, questionMessageId,
-                runHandle, activeAgent);
+        String executionType = decision == RouteDecision.WORKFLOW ? "WORKFLOW" : "REACT";
+        String executionName = (decision == RouteDecision.WORKFLOW ? "workflow-agent:" : "react-agent:")
+                + StrUtil.blankToDefault(plan.route().getTarget(), "default");
+        RagStreamTraceSupport.StreamSpan executionSpan = streamTraceSupport.beginStreamNode(executionName, executionType);
+        runHandle.onSettlement((settlement, error) -> {
+            finishTrace(trace, switch (settlement) {
+                case SUCCESS -> "SUCCESS";
+                case CANCELLED -> "CANCELLED";
+                case ERROR -> "ERROR";
+            }, error);
+            switch (settlement) {
+                case SUCCESS -> executionSpan.finishSuccess();
+                case CANCELLED -> executionSpan.finishCancelledIfRunning();
+                case ERROR -> executionSpan.finishError(error);
+            }
+        });
+        try {
+            startAgentRun(question, userId, conversationId, taskId, title, questionMessageId,
+                    runHandle, activeAgent);
+        } catch (RuntimeException | Error error) {
+            executionSpan.finishError(error);
+            throw error;
+        } finally {
+            executionSpan.detach();
+        }
     }
 
     private TraceRun beginTrace(String question, LoginUser identity, String conversationId, String taskId) {
