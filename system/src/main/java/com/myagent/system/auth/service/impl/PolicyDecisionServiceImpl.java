@@ -129,6 +129,7 @@ public class PolicyDecisionServiceImpl implements com.myagent.system.auth.servic
     }
 
     /** 供健康检查和指标桥接读取；每次鉴权审计落库失败单调递增。 */
+    @Override
     public long auditWriteFailureCount() {
         return auditWriteFailures.get();
     }

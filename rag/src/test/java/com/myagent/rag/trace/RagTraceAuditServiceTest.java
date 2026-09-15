@@ -14,6 +14,7 @@ import com.myagent.workflow.service.AuditQueryService;
 import java.util.Date;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RagTraceAuditServiceTest {
 
@@ -118,6 +119,18 @@ class RagTraceAuditServiceTest {
         assertThat(detail.getEvents()).extracting(event -> event.getCategory())
                 .containsExactlyInAnyOrder("TOOL", "AUTHORIZATION", "BUSINESS");
         assertThat(detail.getEvents()).extracting(event -> event.getActorId()).doesNotContain("other");
+    }
+
+    @Test
+    void storageFailureIncrementsObservableAlertCounterAndRemainsVisibleToCaller() {
+        jdbc.execute("DROP TABLE t_rag_trace_run");
+
+        assertThatThrownBy(() -> service.startRun(RagTraceRunDO.builder()
+                .id("broken-run").traceId("trace-broken").tenantId("tenant-a")
+                .status("RUNNING").startTime(new Date()).build()))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(service.writeFailureCount()).isEqualTo(1L);
     }
 
     private LoginUser identity(String tenantId) {

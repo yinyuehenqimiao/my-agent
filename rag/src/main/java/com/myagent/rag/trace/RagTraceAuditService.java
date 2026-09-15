@@ -14,6 +14,7 @@ import com.myagent.rag.dao.entity.RagTraceNodeDO;
 import com.myagent.rag.dao.entity.RagTraceRunDO;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import com.myagent.workflow.service.AuditQueryService;
@@ -24,23 +25,27 @@ import java.sql.Timestamp;
 import java.util.Date;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.IntSupplier;
 
 /**
  * 推理链路审计存储。运行记录持有租户边界，节点通过 trace_id 从属于运行记录。
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RagTraceAuditService {
 
     private final JdbcTemplate jdbc;
     private final RagTraceProperties properties;
     private final AuditQueryService crossDomainAudit;
+    private final AtomicLong writeFailures = new AtomicLong();
 
     public void startRun(RagTraceRunDO run) {
         if (run == null || !hasText(run.getTraceId()) || !hasText(run.getTenantId())) {
             throw new IllegalArgumentException("Trace 运行记录缺少 traceId 或 tenantId");
         }
-        jdbc.update("""
+        auditedWrite("start_run", run.getTraceId(), () -> jdbc.update("""
                         INSERT INTO t_rag_trace_run
                             (id,trace_id,tenant_id,trace_name,entry_method,conversation_id,task_id,user_id,
                              status,error_message,start_time,end_time,duration_ms,extra_data,create_time,update_time,deleted)
@@ -49,22 +54,22 @@ public class RagTraceAuditService {
                 valueOrId(run.getId()), run.getTraceId(), run.getTenantId(), run.getTraceName(), run.getEntryMethod(),
                 run.getConversationId(), run.getTaskId(), run.getUserId(), defaultText(run.getStatus(), "RUNNING"),
                 truncate(run.getErrorMessage()), timestamp(run.getStartTime()), timestamp(run.getEndTime()),
-                run.getDurationMs(), run.getExtraData());
+                run.getDurationMs(), run.getExtraData()));
     }
 
     public void finishRun(String traceId, String status, String errorMessage, Date endTime, long durationMs) {
-        jdbc.update("""
+        auditedWrite("finish_run", traceId, () -> jdbc.update("""
                         UPDATE t_rag_trace_run
                            SET status=?,error_message=?,end_time=?,duration_ms=?,update_time=CURRENT_TIMESTAMP
                          WHERE trace_id=? AND deleted=0
-                        """, status, truncate(errorMessage), timestamp(endTime), Math.max(0L, durationMs), traceId);
+                        """, status, truncate(errorMessage), timestamp(endTime), Math.max(0L, durationMs), traceId));
     }
 
     public void startNode(RagTraceNodeDO node) {
         if (node == null || !hasText(node.getTraceId()) || !hasText(node.getNodeId())) {
             throw new IllegalArgumentException("Trace 节点缺少 traceId 或 nodeId");
         }
-        int inserted = jdbc.update("""
+        int inserted = auditedWrite("start_node", node.getTraceId(), () -> jdbc.update("""
                         INSERT INTO t_rag_trace_node
                             (id,trace_id,node_id,parent_node_id,depth,node_type,node_name,class_name,method_name,
                              status,error_message,start_time,end_time,duration_ms,extra_data,create_time,update_time,deleted)
@@ -75,7 +80,7 @@ public class RagTraceAuditService {
                 node.getDepth() == null ? 0 : node.getDepth(), node.getNodeType(), node.getNodeName(),
                 node.getClassName(), node.getMethodName(), defaultText(node.getStatus(), "RUNNING"),
                 truncate(node.getErrorMessage()), timestamp(node.getStartTime()), timestamp(node.getEndTime()),
-                node.getDurationMs(), node.getExtraData(), node.getTraceId());
+                node.getDurationMs(), node.getExtraData(), node.getTraceId()));
         if (inserted != 1) {
             throw new IllegalStateException("Trace 运行记录不存在: " + node.getTraceId());
         }
@@ -83,11 +88,11 @@ public class RagTraceAuditService {
 
     public void finishNode(String traceId, String nodeId, String status, String errorMessage,
                            Date endTime, long durationMs) {
-        jdbc.update("""
+        auditedWrite("finish_node", traceId, () -> jdbc.update("""
                         UPDATE t_rag_trace_node
                            SET status=?,error_message=?,end_time=?,duration_ms=?,update_time=CURRENT_TIMESTAMP
                          WHERE trace_id=? AND node_id=? AND deleted=0
-                        """, status, truncate(errorMessage), timestamp(endTime), Math.max(0L, durationMs), traceId, nodeId);
+                        """, status, truncate(errorMessage), timestamp(endTime), Math.max(0L, durationMs), traceId, nodeId));
     }
 
     public RagTraceDetailVO detail(ExecutionIdentity identity, String traceId) {
@@ -218,5 +223,21 @@ public class RagTraceAuditService {
 
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private int auditedWrite(String operation, String traceId, IntSupplier action) {
+        try {
+            return action.getAsInt();
+        } catch (RuntimeException error) {
+            long failures = writeFailures.incrementAndGet();
+            log.error("reasoning_trace_audit_write_failure count={} operation={} traceId={} error={}",
+                    failures, operation, traceId, error.getMessage());
+            throw error;
+        }
+    }
+
+    /** 单调计数，供管理端健康检查或指标采集桥接读取。 */
+    public long writeFailureCount() {
+        return writeFailures.get();
     }
 }

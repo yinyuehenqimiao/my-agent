@@ -29,4 +29,7 @@ public interface PolicyDecisionService {
 
     /** 查询用户平台角色码列表 */
     List<String> rolesOf(Long userId);
+
+    /** 权限审计持久化失败的单调计数，供健康检查与指标桥接读取。 */
+    long auditWriteFailureCount();
 }
