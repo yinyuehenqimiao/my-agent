@@ -13,6 +13,7 @@ public class RagTraceEventVO {
     private String category;
     private String eventCode;
     private String actorId;
+    private String actorName;
     private String targetType;
     private String targetId;
     private String traceId;

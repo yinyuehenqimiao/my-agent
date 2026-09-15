@@ -244,7 +244,10 @@ export function WorkflowDesignerPage() {
                 </Select>
                 <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
                   <Badge variant="outline">{selectedVersion ? WF_STATUS_LABEL[selectedVersion.status] : "未选择"}</Badge>
-                  {selectedVersion && <span>创建人：{selectedVersion.createdBy}</span>}
+                  {selectedVersion && <span>创建人：{selectedVersion.createdByName || selectedVersion.createdBy}</span>}
+                  {selectedVersion?.publishedBy && (
+                    <span>发布人：{selectedVersion.publishedByName || selectedVersion.publishedBy}</span>
+                  )}
                 </div>
               </div>
             )}

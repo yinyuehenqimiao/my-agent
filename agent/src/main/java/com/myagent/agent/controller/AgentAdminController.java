@@ -22,9 +22,13 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /** 工作流后台使用的真实工具目录和路由模拟接口。 */
 @RestController
@@ -37,18 +41,39 @@ public class AgentAdminController {
     private final RouteBindingService routeBindingService;
     private final PolicyDecisionService policyDecisionService;
 
-    /** 仅返回工具元数据；工具处理器和执行入口不会暴露给管理端。 */
+    /** 分页返回工具元数据；工具处理器和执行入口不会暴露给管理端。 */
     @GetMapping("/tools")
-    public Result<List<ToolDefinition>> listTools() {
+    public Result<Map<String, Object>> listTools(
+            @RequestParam(defaultValue = "1") long current,
+            @RequestParam(defaultValue = "20") long size,
+            @RequestParam(required = false) String keyword) {
         policyDecisionService.requirePermission(UserContext.requireIdentity(), "tool:view");
-        return Results.success(toolGateway.listDefinitions());
+        List<ToolDefinition> all = toolGateway.listDefinitions();
+        String kw = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+        List<ToolDefinition> filtered = kw.isEmpty() ? all : all.stream()
+                .filter(tool -> containsIgnoreCase(tool.getName(), kw)
+                        || containsIgnoreCase(tool.getDescription(), kw)
+                        || containsIgnoreCase(tool.getPermissionCode(), kw))
+                .toList();
+        return Results.success(paginate(filtered, current, size));
     }
 
     @GetMapping("/routes")
-    public Result<List<RouteBindingService.RouteBinding>> listRoutes() {
+    public Result<Map<String, Object>> listRoutes(
+            @RequestParam(defaultValue = "1") long current,
+            @RequestParam(defaultValue = "20") long size,
+            @RequestParam(required = false) String keyword) {
         ExecutionIdentity identity = UserContext.requireIdentity();
         policyDecisionService.requirePermission(identity, "route:view");
-        return Results.success(routeBindingService.list(identity));
+        List<RouteBindingService.RouteBinding> all = routeBindingService.list(identity);
+        String kw = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+        List<RouteBindingService.RouteBinding> filtered = kw.isEmpty() ? all : all.stream()
+                .filter(route -> containsIgnoreCase(route.routeKey(), kw)
+                        || containsIgnoreCase(route.intentCode(), kw)
+                        || containsIgnoreCase(route.intentName(), kw)
+                        || containsIgnoreCase(route.target(), kw))
+                .toList();
+        return Results.success(paginate(filtered, current, size));
     }
 
     @GetMapping("/routes/options")
@@ -95,6 +120,24 @@ public class AgentAdminController {
         return Results.success(new RouteSimulationResponse(
                 plan.intentCode(), plan.intentName(), plan.intentKind(), route.getConfidence(),
                 route.getDecision(), route.getTarget(), route.getReason()));
+    }
+
+    private static boolean containsIgnoreCase(String value, String keyword) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(keyword);
+    }
+
+    private static <T> Map<String, Object> paginate(List<T> source, long current, long size) {
+        long safeCurrent = Math.max(1L, current);
+        long safeSize = Math.min(Math.max(size, 1L), 200L);
+        long total = source.size();
+        int from = (int) Math.min((safeCurrent - 1L) * safeSize, total);
+        int to = (int) Math.min(from + safeSize, total);
+        Map<String, Object> page = new LinkedHashMap<>();
+        page.put("records", source.subList(from, to));
+        page.put("total", total);
+        page.put("current", safeCurrent);
+        page.put("size", safeSize);
+        return page;
     }
 
     public record RouteSimulationRequest(String question, Boolean hasPendingAction) {

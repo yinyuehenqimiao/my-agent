@@ -101,8 +101,10 @@ public class LeaveTaskHandlers {
 
     private void audit(DelegateExecution ex) {
         LeaveRequest r = request(ex);
-        db.update("INSERT INTO ent_audit(request_id,user_id,actor,action,comment,created_at) VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)",
-                r.id(), r.userId(), actor(ex), "APPROVED", "Flowable 审批通过");
+        String id = java.util.UUID.randomUUID().toString().replace("-", "");
+        db.update(
+                "INSERT INTO ent_audit(id,request_id,actor_id,action_id,event,comment,created_at) VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)",
+                id, r.id(), actor(ex), null, "APPROVED", "Flowable 审批通过");
     }
 
     // ===== 辅助 =====

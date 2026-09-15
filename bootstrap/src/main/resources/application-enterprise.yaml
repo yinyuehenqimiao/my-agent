@@ -5,6 +5,9 @@ myagent:
   enterprise:
     enabled: true
     demo-enabled: true
+    # 线上使用 Flowable 请假流程（legacy 仅作回退）
+    leave:
+      engine: flowable
 rag:
   search:
     channels:

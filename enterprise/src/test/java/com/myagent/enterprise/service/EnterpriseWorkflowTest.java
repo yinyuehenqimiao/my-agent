@@ -38,10 +38,20 @@ class EnterpriseWorkflowTest {
         @Bean EnterpriseMapper mapper(JdbcTemplate jdbc) { return new EnterpriseMapper(jdbc); }
         @Bean ObjectMapper json() { return new ObjectMapper().registerModule(new JavaTimeModule()); }
         @Bean Clock clock() { return Clock.fixed(Instant.parse("2026-09-10T02:00:00Z"),ZoneId.of("Asia/Shanghai")); }
-        @Bean EnterpriseService service(EnterpriseMapper mapper,ObjectMapper json,Clock clock) { return new EnterpriseService(mapper,json,clock); }
+        @Bean EnterpriseService service(EnterpriseMapper mapper,ObjectMapper json,Clock clock) {
+            return new EnterpriseService(mapper, json, clock, emptyLeaveFlow());
+        }
         @Bean PlatformTransactionManager tx(DataSource ds) { return new DataSourceTransactionManager(ds); }
         @Bean com.myagent.system.auth.service.PolicyDecisionService policy(JdbcTemplate jdbc) {
             return new com.myagent.system.auth.service.impl.PolicyDecisionServiceImpl(jdbc);
+        }
+        private static org.springframework.beans.factory.ObjectProvider<com.myagent.enterprise.flowable.LeaveApprovalFlowService> emptyLeaveFlow() {
+            return new org.springframework.beans.factory.ObjectProvider<>() {
+                @Override public com.myagent.enterprise.flowable.LeaveApprovalFlowService getObject() { return null; }
+                @Override public com.myagent.enterprise.flowable.LeaveApprovalFlowService getObject(Object... args) { return null; }
+                @Override public com.myagent.enterprise.flowable.LeaveApprovalFlowService getIfAvailable() { return null; }
+                @Override public com.myagent.enterprise.flowable.LeaveApprovalFlowService getIfUnique() { return null; }
+            };
         }
     }
     @Autowired EnterpriseService service;
@@ -131,7 +141,8 @@ class EnterpriseWorkflowTest {
         finally{pool.shutdownNow();}assertEquals(2,service.balance("e",2026).frozen());
     }
     @Test void newServiceInstanceRecoversPersistedCard() {
-        Action a=prepare();EnterpriseService restarted=new EnterpriseService(new EnterpriseMapper(jdbc),new ObjectMapper().registerModule(new JavaTimeModule()),new Config().clock());
+        Action a=prepare();
+        EnterpriseService restarted=new EnterpriseService(new EnterpriseMapper(jdbc),new ObjectMapper().registerModule(new JavaTimeModule()),new Config().clock(), Config.emptyLeaveFlow());
         assertEquals(a,restarted.getAction("e",a.id()));service.confirm("e",a.id());assertEquals("DONE",restarted.getAction("e",a.id()).status());
     }
 }

@@ -17,6 +17,8 @@ export interface WfDefinition {
   publishedVersionNumber?: number | null;
   latestVersionNumber?: number | null;
   latestStatus?: WfVersionStatus | null;
+  latestCreatedBy?: string | null;
+  latestCreatedByName?: string | null;
   updateTime?: string | null;
 }
 
@@ -25,9 +27,11 @@ export interface WfVersion {
   versionNumber: number;
   status: WfVersionStatus;
   createdBy: string;
+  createdByName?: string | null;
   createdTime: string;
   publishedTime?: string | null;
   publishedBy?: string | null;
+  publishedByName?: string | null;
   bpmnXml?: string | null;
 }
 
@@ -58,6 +62,7 @@ export interface AuditEntry {
   category: AuditCategory;
   eventCode: string;
   actorId?: string | null;
+  actorName?: string | null;
   targetType?: string | null;
   targetId?: string | null;
   traceId?: string | null;
@@ -66,6 +71,13 @@ export interface AuditEntry {
 }
 
 export type AuditCategory = "ALL" | "PLATFORM" | "AUTHORIZATION" | "TOOL" | "BUSINESS";
+
+export interface PageResult<T> {
+  records: T[];
+  total: number;
+  current: number;
+  size: number;
+}
 
 export const AUDIT_CATEGORY_LABEL: Record<AuditCategory, string> = {
   ALL: "全部类型",
@@ -102,8 +114,13 @@ export const WF_STATUS_LABEL: Record<WfVersionStatus, string> = {
 };
 
 export const workflowService = {
-  listDefinitions: () =>
-    api.get<WfDefinition[]>("/api/workflow/definitions"),
+  listDefinitions: (params: { current?: number; size?: number; keyword?: string } = {}) => {
+    const query = new URLSearchParams();
+    query.set("current", String(params.current ?? 1));
+    query.set("size", String(params.size ?? 20));
+    if (params.keyword?.trim()) query.set("keyword", params.keyword.trim());
+    return api.get<PageResult<WfDefinition>>(`/api/workflow/definitions?${query.toString()}`);
+  },
 
   getDefinition: (defKey: string) =>
     api.get<WfDefinitionDetail>(`/api/workflow/definitions/${defKey}`),
@@ -129,6 +146,11 @@ export const workflowService = {
   rollback: (defId: number, versionId: number) =>
     api.post<void>(`/api/workflow/definitions/${defId}/rollback/${versionId}`),
 
-  listAudit: (limit = 100, category: AuditCategory = "ALL") =>
-    api.get<AuditEntry[]>(`/api/workflow/audit?limit=${limit}&category=${encodeURIComponent(category)}`)
+  listAudit: (params: { current?: number; size?: number; category?: AuditCategory } = {}) => {
+    const query = new URLSearchParams();
+    query.set("current", String(params.current ?? 1));
+    query.set("size", String(params.size ?? 20));
+    query.set("category", params.category ?? "ALL");
+    return api.get<PageResult<AuditEntry>>(`/api/workflow/audit?${query.toString()}`);
+  }
 };

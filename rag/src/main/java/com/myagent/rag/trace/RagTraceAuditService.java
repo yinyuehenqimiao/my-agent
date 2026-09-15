@@ -23,10 +23,16 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntSupplier;
+import java.util.stream.Collectors;
 
 /**
  * 推理链路审计存储。运行记录持有租户边界，节点通过 trace_id 从属于运行记录。
@@ -117,17 +123,62 @@ public class RagTraceAuditService {
         List<RagTraceEventVO> events = crossDomainAudit.byTrace(identity, traceId).stream()
                 .map(event -> RagTraceEventVO.builder()
                         .id(event.id()).category(event.category().name()).eventCode(event.eventCode())
-                        .actorId(event.actorId()).targetType(event.targetType()).targetId(event.targetId())
+                        .actorId(event.actorId()).actorName(event.actorName())
+                        .targetType(event.targetType()).targetId(event.targetId())
                         .traceId(event.traceId()).detail(event.detail()).createdTime(event.createdTime())
                         .build())
                 .toList();
-        return RagTraceDetailVO.builder().run(runs.get(0)).nodes(nodes).events(events).build();
+        RagTraceRunVO run = fillUsernames(List.of(runs.get(0))).get(0);
+        return RagTraceDetailVO.builder().run(run).nodes(nodes).events(events).build();
     }
 
     public Page<RagTraceRunVO> page(ExecutionIdentity identity, RagTraceRunPageRequest request) {
         String tenantId = requireTenant(identity);
         long current = Math.max(1L, request == null ? 1L : request.getCurrent());
         long size = Math.min(200L, Math.max(1L, request == null ? 20L : request.getSize()));
+        FilterClause filter = buildFilter(tenantId, request);
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM t_rag_trace_run" + filter.where(),
+                Long.class, filter.params().toArray());
+        List<Object> pageParams = new ArrayList<>(filter.params());
+        pageParams.add(size);
+        pageParams.add((current - 1L) * size);
+        List<RagTraceRunVO> records = jdbc.query("""
+                        SELECT trace_id,trace_name,entry_method,conversation_id,task_id,user_id,status,error_message,
+                               duration_ms,start_time,end_time,extra_data
+                          FROM t_rag_trace_run
+                        """ + filter.where() + " ORDER BY start_time DESC,id DESC LIMIT ? OFFSET ?",
+                (rs, rowNum) -> toRun(rs), pageParams.toArray());
+        Page<RagTraceRunVO> page = new Page<>(current, size, total == null ? 0L : total);
+        page.setRecords(fillUsernames(records));
+        return page;
+    }
+
+    /** 按当前过滤条件统计成功 / 失败 / 运行中 / 取消次数。 */
+    public Map<String, Object> stats(ExecutionIdentity identity, RagTraceRunPageRequest request) {
+        String tenantId = requireTenant(identity);
+        FilterClause filter = buildFilter(tenantId, request);
+        Map<String, Long> byStatus = new HashMap<>();
+        jdbc.query("SELECT status, COUNT(*) AS cnt FROM t_rag_trace_run" + filter.where()
+                        + " GROUP BY status",
+                rs -> {
+                    byStatus.put(rs.getString("status"), rs.getLong("cnt"));
+                }, filter.params().toArray());
+        long success = byStatus.getOrDefault("SUCCESS", 0L);
+        long error = byStatus.getOrDefault("ERROR", 0L);
+        long running = byStatus.getOrDefault("RUNNING", 0L);
+        long cancelled = byStatus.getOrDefault("CANCELLED", 0L);
+        long total = byStatus.values().stream().mapToLong(Long::longValue).sum();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("total", total);
+        result.put("successCount", success);
+        result.put("errorCount", error);
+        result.put("runningCount", running);
+        result.put("cancelledCount", cancelled);
+        result.put("successRate", total == 0L ? 0D : (success * 100D / total));
+        return result;
+    }
+
+    private FilterClause buildFilter(String tenantId, RagTraceRunPageRequest request) {
         StringBuilder where = new StringBuilder(" WHERE tenant_id=? AND deleted=0");
         List<Object> params = new ArrayList<>();
         params.add(tenantId);
@@ -138,20 +189,29 @@ public class RagTraceAuditService {
             appendFilter(where, params, "status", request.getStatus());
             appendFilter(where, params, "user_id", request.getUserId());
         }
-        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM t_rag_trace_run" + where,
-                Long.class, params.toArray());
-        List<Object> pageParams = new ArrayList<>(params);
-        pageParams.add(size);
-        pageParams.add((current - 1L) * size);
-        List<RagTraceRunVO> records = jdbc.query("""
-                        SELECT trace_id,trace_name,entry_method,conversation_id,task_id,user_id,status,error_message,
-                               duration_ms,start_time,end_time,extra_data
-                          FROM t_rag_trace_run
-                        """ + where + " ORDER BY start_time DESC,id DESC LIMIT ? OFFSET ?",
-                (rs, rowNum) -> toRun(rs), pageParams.toArray());
-        Page<RagTraceRunVO> page = new Page<>(current, size, total == null ? 0L : total);
-        page.setRecords(records);
-        return page;
+        return new FilterClause(where.toString(), params);
+    }
+
+    private List<RagTraceRunVO> fillUsernames(List<RagTraceRunVO> records) {
+        if (records == null || records.isEmpty()) {
+            return records == null ? List.of() : records;
+        }
+        Set<String> ids = records.stream().map(RagTraceRunVO::getUserId)
+                .filter(Objects::nonNull).filter(id -> !id.isBlank()).collect(Collectors.toSet());
+        Map<String, String> names = crossDomainAudit.resolveUsernames(ids);
+        for (RagTraceRunVO run : records) {
+            if (run.getUserId() == null) {
+                continue;
+            }
+            String name = names.get(run.getUserId());
+            if (name != null) {
+                run.setUsername(name);
+            }
+        }
+        return records;
+    }
+
+    private record FilterClause(String where, List<Object> params) {
     }
 
     private void appendFilter(StringBuilder where, List<Object> params, String column, String value) {

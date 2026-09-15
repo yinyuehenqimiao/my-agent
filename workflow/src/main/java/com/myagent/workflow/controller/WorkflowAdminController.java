@@ -13,9 +13,13 @@ import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 工作流管理后台接口：定义/版本 CRUD、提交审核、审核、发布、退休、回滚、审计查询。
@@ -45,10 +49,28 @@ public class WorkflowAdminController {
         return Results.success(v.getId());
     }
 
-    /** 列出工作流定义（含最新版本状态、已发布版本号） */
+    /** 分页列出工作流定义（含最新版本状态、已发布版本号） */
     @GetMapping("/definitions")
-    public Result<List<Map<String, Object>>> listDefinitions() {
+    public Result<Map<String, Object>> listDefinitions(
+            @RequestParam(defaultValue = "1") long current,
+            @RequestParam(defaultValue = "20") long size,
+            @RequestParam(required = false) String keyword) {
         policy.requirePermission(UserContext.requireIdentity(), "workflow:view");
+        long safeCurrent = Math.max(1L, current);
+        long safeSize = Math.min(Math.max(size, 1L), 200L);
+        String where = " WHERE d.tenant_id = 'default'";
+        List<Object> params = new ArrayList<>();
+        if (keyword != null && !keyword.isBlank()) {
+            where += " AND (LOWER(d.def_key) LIKE ? OR LOWER(d.name) LIKE ? OR LOWER(COALESCE(d.description,'')) LIKE ?)";
+            String like = "%" + keyword.trim().toLowerCase() + "%";
+            params.add(like);
+            params.add(like);
+            params.add(like);
+        }
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM wf_definition d" + where, Long.class, params.toArray());
+        List<Object> pageParams = new ArrayList<>(params);
+        pageParams.add(safeSize);
+        pageParams.add((safeCurrent - 1L) * safeSize);
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 SELECT d.id,
                        d.def_key,
@@ -63,12 +85,20 @@ public class WorkflowAdminController {
                          ORDER BY v.version_number DESC LIMIT 1) AS latest_version_number,
                        (SELECT v.status FROM wf_version v
                          WHERE v.definition_id = d.id
-                         ORDER BY v.version_number DESC LIMIT 1) AS latest_status
+                         ORDER BY v.version_number DESC LIMIT 1) AS latest_status,
+                       (SELECT v.created_by FROM wf_version v
+                         WHERE v.definition_id = d.id
+                         ORDER BY v.version_number DESC LIMIT 1) AS latest_created_by
                 FROM wf_definition d
-                WHERE d.tenant_id = 'default'
-                ORDER BY d.id DESC
-                """);
-        return Results.success(rows.stream().map(this::toDefinitionListItem).toList());
+                """ + where + " ORDER BY d.id DESC LIMIT ? OFFSET ?", pageParams.toArray());
+        List<Map<String, Object>> records = rows.stream().map(this::toDefinitionListItem).toList();
+        enrichActorNames(records, "latestCreatedBy", "latestCreatedByName");
+        Map<String, Object> page = new LinkedHashMap<>();
+        page.put("records", records);
+        page.put("total", total == null ? 0L : total);
+        page.put("current", safeCurrent);
+        page.put("size", safeSize);
+        return Results.success(page);
     }
 
     /** 获取定义与其版本列表 */
@@ -86,9 +116,12 @@ public class WorkflowAdminController {
         List<Map<String, Object>> versions = jdbc.queryForList(
                 "SELECT id,version_number,status,created_by,created_time,published_time,published_by,bpmn_xml FROM wf_version WHERE definition_id=? ORDER BY version_number",
                 def.get("id"));
+        List<Map<String, Object>> versionViews = versions.stream().map(this::toVersion).toList();
+        enrichActorNames(versionViews, "createdBy", "createdByName");
+        enrichActorNames(versionViews, "publishedBy", "publishedByName");
         return Results.success(Map.of(
                 "definition", toDefinition(def),
-                "versions", versions.stream().map(this::toVersion).toList()));
+                "versions", versionViews));
     }
 
     /** 基于已有版本创建新草稿 */
@@ -101,7 +134,6 @@ public class WorkflowAdminController {
 
     // ===== 生命周期 =====
 
-    /** 提交审核 */
     @PostMapping("/versions/{versionId}/submit-review")
     public Result<Void> submitReview(@PathVariable Long versionId) {
         policy.requirePermission(UserContext.requireIdentity(), "workflow:edit");
@@ -109,7 +141,6 @@ public class WorkflowAdminController {
         return Results.success();
     }
 
-    /** 审核（approve/reject） */
     @PostMapping("/versions/{versionId}/review")
     public Result<Void> review(@PathVariable Long versionId, @RequestBody ReviewRequest req) {
         policy.requirePermission(UserContext.requireIdentity(), "workflow:review");
@@ -117,7 +148,6 @@ public class WorkflowAdminController {
         return Results.success();
     }
 
-    /** 发布 */
     @PostMapping("/versions/{versionId}/publish")
     public Result<Void> publish(@PathVariable Long versionId) {
         policy.requirePermission(UserContext.requireIdentity(), "workflow:publish");
@@ -125,7 +155,6 @@ public class WorkflowAdminController {
         return Results.success();
     }
 
-    /** 退休 */
     @PostMapping("/versions/{versionId}/retire")
     public Result<Void> retire(@PathVariable Long versionId) {
         policy.requirePermission(UserContext.requireIdentity(), "workflow:publish");
@@ -133,7 +162,6 @@ public class WorkflowAdminController {
         return Results.success();
     }
 
-    /** 回滚到指定已发布版本 */
     @PostMapping("/definitions/{defId}/rollback/{versionId}")
     public Result<Void> rollback(@PathVariable Long defId, @PathVariable Long versionId) {
         policy.requirePermission(UserContext.requireIdentity(), "workflow:publish");
@@ -143,18 +171,39 @@ public class WorkflowAdminController {
 
     // ===== 审计 =====
 
-    /** 统一审计查询；权限校验后只返回当前登录租户的数据。 */
+    /** 统一审计分页查询；操作人返回用户名。 */
     @GetMapping("/audit")
-    public Result<List<AuditQueryService.AuditEntry>> audit(
-            @RequestParam(defaultValue = "100") int limit,
+    public Result<Map<String, Object>> audit(
+            @RequestParam(defaultValue = "1") long current,
+            @RequestParam(defaultValue = "20") long size,
             @RequestParam(defaultValue = "ALL") AuditQueryService.Category category) {
         var identity = UserContext.requireIdentity();
         policy.requirePermission(identity, "audit:view");
-        return Results.success(auditQueryService.list(identity, category, limit));
+        return Results.success(auditQueryService.page(identity, category, current, size).toMap());
     }
 
     private String currentActor() {
         return UserContext.requireIdentity().getUserId();
+    }
+
+    private void enrichActorNames(List<Map<String, Object>> rows, String idKey, String nameKey) {
+        Set<String> ids = rows.stream()
+                .map(row -> row.get(idKey) == null ? null : String.valueOf(row.get(idKey)))
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank() && !"null".equalsIgnoreCase(s))
+                .collect(Collectors.toSet());
+        Map<String, String> names = auditQueryService.resolveUsernames(ids);
+        for (Map<String, Object> row : rows) {
+            Object raw = row.get(idKey);
+            if (raw == null) {
+                continue;
+            }
+            String id = String.valueOf(raw);
+            String name = names.get(id);
+            if (name != null) {
+                row.put(nameKey, name);
+            }
+        }
     }
 
     private Map<String, Object> toDefinitionListItem(Map<String, Object> row) {
@@ -167,6 +216,7 @@ public class WorkflowAdminController {
         m.put("publishedVersionNumber", row.get("published_version_number"));
         m.put("latestVersionNumber", row.get("latest_version_number"));
         m.put("latestStatus", row.get("latest_status"));
+        m.put("latestCreatedBy", row.get("latest_created_by"));
         m.put("updateTime", row.get("update_time"));
         return m;
     }
@@ -194,8 +244,6 @@ public class WorkflowAdminController {
         m.put("bpmnXml", row.get("bpmn_xml"));
         return m;
     }
-
-    // ===== 请求 DTO =====
 
     public record CreateDefinitionRequest(String defKey, String name, String description, String bpmnXml) {
     }

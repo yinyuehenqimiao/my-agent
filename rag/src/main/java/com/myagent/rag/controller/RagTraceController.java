@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 /** 推理链路审计管理接口；权限和租户身份均由服务端强制决定。 */
 @RestController
@@ -30,6 +31,12 @@ public class RagTraceController {
     public Result<Page<RagTraceRunVO>> pageRuns(RagTraceRunPageRequest request) {
         ExecutionIdentity identity = authorizedIdentity();
         return Results.success(auditService.page(identity, request));
+    }
+
+    @GetMapping("/rag/traces/stats")
+    public Result<Map<String, Object>> stats(RagTraceRunPageRequest request) {
+        ExecutionIdentity identity = authorizedIdentity();
+        return Results.success(auditService.stats(identity, request));
     }
 
     @GetMapping("/rag/traces/runs/{traceId}")

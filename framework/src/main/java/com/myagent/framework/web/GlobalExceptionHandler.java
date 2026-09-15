@@ -47,6 +47,13 @@ public class GlobalExceptionHandler {
         return Results.failure(ex);
     }
 
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public Result<Void> handleNoResource(HttpServletRequest request,
+                                         org.springframework.web.servlet.resource.NoResourceFoundException ex) {
+        log.warn("[{}] {} [not-found] {}", request.getMethod(), request.getRequestURI(), ex.getResourcePath());
+        return Results.failure(BaseErrorCode.CLIENT_ERROR.code(), "接口不存在：" + request.getRequestURI());
+    }
+
     @ExceptionHandler(Throwable.class)
     public Result<Void> handleThrowable(HttpServletRequest request, Throwable ex) {
         log.error("[{}] {} [uncaught]", request.getMethod(), request.getRequestURI(), ex);

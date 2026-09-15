@@ -83,16 +83,18 @@ class WorkflowAdminControllerTest {
     @Test
     void auditRequiresAuditViewPermission() {
         doThrow(new ClientException("无权限")).when(policy).requirePermission(any(), eq("audit:view"));
-        assertThatThrownBy(() -> controller.audit(100, AuditQueryService.Category.ALL)).isInstanceOf(ClientException.class);
+        assertThatThrownBy(() -> controller.audit(1, 20, AuditQueryService.Category.ALL)).isInstanceOf(ClientException.class);
         verifyNoInteractions(auditQueryService);
     }
 
     @Test
     void auditDelegatesWithCurrentTenantAndCategory() {
-        controller.audit(25, AuditQueryService.Category.TOOL);
+        when(auditQueryService.page(any(), eq(AuditQueryService.Category.TOOL), eq(1L), eq(25L)))
+                .thenReturn(new AuditQueryService.PageResult(List.of(), 0, 1, 25));
+        controller.audit(1, 25, AuditQueryService.Category.TOOL);
 
-        verify(auditQueryService).list(argThat(identity -> "default".equals(identity.getTenantId())),
-                eq(AuditQueryService.Category.TOOL), eq(25));
+        verify(auditQueryService).page(argThat(identity -> "default".equals(identity.getTenantId())),
+                eq(AuditQueryService.Category.TOOL), eq(1L), eq(25L));
     }
 
     @Test

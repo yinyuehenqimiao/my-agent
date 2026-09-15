@@ -46,32 +46,36 @@ import { AuditPage, RouteSimulationPage, ToolCenterPage } from "./WorkflowAdminP
 describe("工作流管理辅助页面", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.listRoutes.mockResolvedValue([]);
+    mocks.listRoutes.mockResolvedValue({ records: [], total: 0, current: 1, size: 20 });
     mocks.getRouteOptions.mockResolvedValue({
       intents: [{ value: "leave-approval", label: "请假申请" }],
       workflows: [{ value: "leave-approval", label: "请假审批" }],
       reactConfigs: [{ value: "default", label: "标准开放问答" }],
     });
-    mocks.listAudit.mockResolvedValue([]);
+    mocks.listAudit.mockResolvedValue({ records: [], total: 0, current: 1, size: 20 });
+    mocks.listTools.mockResolvedValue({ records: [], total: 0, current: 1, size: 20 });
   });
   afterEach(cleanup);
 
   it("工具中心展示 Tool Gateway 返回的真实中文工具信息", async () => {
-    mocks.listTools.mockResolvedValue([{
-      name: "get_leave_balance",
-      description: "查询本人年假余额",
-      readOnly: true,
-      riskLevel: "LOW",
-      timeoutMs: 5000,
-      maxRetries: 0,
-      idempotent: false,
-      requiresConfirmation: false,
-      sensitiveFields: [],
-      allowedSources: ["REACT", "WORKFLOW"],
-      permissionCode: null,
-      enabled: true,
-      inputSchema: { type: "object" },
-    }]);
+    mocks.listTools.mockResolvedValue({
+      records: [{
+        name: "get_leave_balance",
+        description: "查询本人年假余额",
+        readOnly: true,
+        riskLevel: "LOW",
+        timeoutMs: 5000,
+        maxRetries: 0,
+        idempotent: false,
+        requiresConfirmation: false,
+        sensitiveFields: [],
+        allowedSources: ["REACT", "WORKFLOW"],
+        permissionCode: null,
+        enabled: true,
+        inputSchema: { type: "object" },
+      }],
+      total: 1, current: 1, size: 20,
+    });
 
     render(<ToolCenterPage />);
 
@@ -123,17 +127,24 @@ describe("工作流管理辅助页面", () => {
   });
 
   it("统一审计展示中文事件并按分类重新查询", async () => {
-    mocks.listAudit.mockResolvedValue([{
-      id: "9", category: "TOOL", eventCode: "TOOL_EXECUTION", actorId: "employee",
-      targetType: "tool", targetId: "get_leave_balance", traceId: "trace-9",
-      detail: "phase=COMPLETED", createdTime: "2026-09-13T11:00:00",
-    }]);
+    mocks.listAudit.mockResolvedValue({
+      records: [{
+        id: "9", category: "TOOL", eventCode: "TOOL_EXECUTION", actorId: "5", actorName: "employee",
+        targetType: "tool", targetId: "get_leave_balance", traceId: "trace-9",
+        detail: "phase=COMPLETED", createdTime: "2026-09-13T11:00:00",
+      }],
+      total: 1, current: 1, size: 20,
+    });
     render(<AuditPage />);
 
     expect(await screen.findByText("工具执行")).toBeTruthy();
     expect(screen.getAllByText("工具调用").length).toBeGreaterThan(0);
     expect(screen.getByText("trace-9")).toBeTruthy();
+    expect(screen.getByText("employee")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("审计分类"), { target: { value: "AUTHORIZATION" } });
-    await waitFor(() => expect(mocks.listAudit).toHaveBeenLastCalledWith(100, "AUTHORIZATION"));
+    await waitFor(() => expect(mocks.listAudit).toHaveBeenLastCalledWith(expect.objectContaining({
+      category: "AUTHORIZATION",
+      current: 1,
+    })));
   });
 });

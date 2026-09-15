@@ -1,4 +1,5 @@
 import { api } from "@/services/api";
+import type { PageResult } from "@/services/workflowService";
 
 export type ToolRiskLevel = "LOW" | "MEDIUM" | "HIGH";
 export type ToolSource = "REACT" | "WORKFLOW" | "MCP" | "ADMIN";
@@ -80,8 +81,20 @@ export const ROUTE_DECISION_LABEL: Record<RouteDecision, string> = {
 };
 
 export const agentAdminService = {
-  listTools: () => api.get<ToolCatalogItem[]>("/api/agent/admin/tools"),
-  listRoutes: () => api.get<RouteBinding[]>("/api/agent/admin/routes"),
+  listTools: (params: { current?: number; size?: number; keyword?: string } = {}) => {
+    const query = new URLSearchParams();
+    query.set("current", String(params.current ?? 1));
+    query.set("size", String(params.size ?? 20));
+    if (params.keyword?.trim()) query.set("keyword", params.keyword.trim());
+    return api.get<PageResult<ToolCatalogItem>>(`/api/agent/admin/tools?${query.toString()}`);
+  },
+  listRoutes: (params: { current?: number; size?: number; keyword?: string } = {}) => {
+    const query = new URLSearchParams();
+    query.set("current", String(params.current ?? 1));
+    query.set("size", String(params.size ?? 20));
+    if (params.keyword?.trim()) query.set("keyword", params.keyword.trim());
+    return api.get<PageResult<RouteBinding>>(`/api/agent/admin/routes?${query.toString()}`);
+  },
   getRouteOptions: () => api.get<RouteOptions>("/api/agent/admin/routes/options"),
   saveRoute: (routeKey: string, payload: SaveRouteRequest) =>
     api.put<RouteBinding>(`/api/agent/admin/routes/${encodeURIComponent(routeKey)}`, payload),

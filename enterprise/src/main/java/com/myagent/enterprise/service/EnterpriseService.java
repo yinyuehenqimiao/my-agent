@@ -3,8 +3,10 @@ package com.myagent.enterprise.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myagent.enterprise.dao.mapper.EnterpriseMapper;
 import com.myagent.enterprise.dto.EnterpriseTypes.*;
+import com.myagent.enterprise.flowable.LeaveApprovalFlowService;
 import com.myagent.framework.exception.ClientException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +20,8 @@ public class EnterpriseService {
     private final EnterpriseMapper db;
     private final ObjectMapper json;
     private final Clock enterpriseClock;
+    /** Flowable 引擎启用时注入；未启用则为空，走 legacy。 */
+    private final ObjectProvider<LeaveApprovalFlowService> leaveFlow;
 
     public Employee profile(String actor) {
         Employee e = db.employee(actor, false);
@@ -118,7 +122,49 @@ public class EnterpriseService {
         LeaveRequest r = db.request(a.requestId(), true);
         String next;
         Map<?, ?> payload = decode(a.payload());
-        switch (a.kind()) {
+        LeaveApprovalFlowService flow = leaveFlow.getIfAvailable();
+        if (flow != null) {
+            next = confirmWithFlowable(flow, actor, a, r, payload);
+        } else {
+            next = confirmLegacy(actor, a, r, payload);
+        }
+        db.update("UPDATE ent_leave_request SET status=?,updated_at=? WHERE id=?", next, now(), r.id());
+        audit(r.id(), actor, a.id(), next, Objects.toString(payload.get("comment"), ""));
+        db.update("UPDATE ent_action SET status='DONE',result=? WHERE id=?", encode(Map.of("requestId", r.id(), "status", next, "traceId", a.id())), a.id());
+        return db.action(a.id(), false);
+    }
+
+    /** Flowable 路径：提交启动流程；审批完成 Flowable 任务；撤回取消实例。 */
+    private String confirmWithFlowable(LeaveApprovalFlowService flow, String actor, Action a, LeaveRequest r, Map<?, ?> payload) {
+        return switch (a.kind()) {
+            case "SUBMIT" -> {
+                require(actor.equals(r.userId()) && r.status().equals("DRAFT"), "申请状态已变化");
+                Employee employee = profile(actor);
+                validateApprovers(employee);
+                require(Objects.equals(employee.managerId(), r.managerId()) && Objects.equals(employee.hrId(), r.hrId()), "审批关系已变化，请重新生成申请");
+                validateSubmission(r);
+                flow.start(r.id(), actor, a.id());
+                LeaveRequest after = db.request(r.id(), false);
+                yield after != null ? after.status() : "PENDING_MANAGER";
+            }
+            case "APPROVE", "REJECT" -> {
+                authorizeApproval(actor, r);
+                require(r.status().equals(payload.get("expectedStatus")), "审批节点已变化，请刷新");
+                flow.completeApproval(actor, r.id(), a.kind(), Objects.toString(payload.get("comment"), ""));
+                LeaveRequest after = db.request(r.id(), false);
+                yield after != null ? after.status() : a.kind().equals("REJECT") ? "REJECTED" : r.status();
+            }
+            case "WITHDRAW" -> {
+                require(actor.equals(r.userId()) && pending(r), "只能撤回本人审批中的申请");
+                flow.withdraw(actor, r.id());
+                yield "WITHDRAWN";
+            }
+            default -> throw new ClientException("不支持的操作");
+        };
+    }
+
+    private String confirmLegacy(String actor, Action a, LeaveRequest r, Map<?, ?> payload) {
+        return switch (a.kind()) {
             case "SUBMIT" -> {
                 require(actor.equals(r.userId()) && r.status().equals("DRAFT"), "申请状态已变化");
                 Employee employee = profile(actor);
@@ -126,31 +172,33 @@ public class EnterpriseService {
                 require(Objects.equals(employee.managerId(), r.managerId()) && Objects.equals(employee.hrId(), r.hrId()), "审批关系已变化，请重新生成申请");
                 validateSubmission(r);
                 if (r.leaveType().equals("ANNUAL")) db.update("UPDATE ent_leave_account SET frozen=frozen+? WHERE user_id=? AND year=?", r.days(), actor, r.startDate().getYear());
-                next = "PENDING_MANAGER";
                 task(r, r.managerId(), "MANAGER");
+                yield "PENDING_MANAGER";
             }
             case "APPROVE", "REJECT" -> {
                 authorizeApproval(actor, r);
                 require(r.status().equals(payload.get("expectedStatus")), "审批节点已变化，请刷新");
                 db.update("UPDATE ent_approval_task SET status=? WHERE request_id=? AND assignee_id=? AND status='PENDING'", a.kind().equals("APPROVE") ? "APPROVED" : "REJECTED", r.id(), actor);
-                if (a.kind().equals("REJECT")) { next = "REJECTED"; release(r, false); }
-                else if (r.status().equals("PENDING_MANAGER")) {
+                if (a.kind().equals("REJECT")) {
+                    release(r, false);
+                    yield "REJECTED";
+                } else if (r.status().equals("PENDING_MANAGER")) {
                     require(profile(r.hrId()).businessRole().equals("HR"), "人事审批人已失效");
-                    next = "PENDING_HR"; task(r, r.hrId(), "HR");
-                } else { next = "APPROVED"; release(r, true); }
+                    task(r, r.hrId(), "HR");
+                    yield "PENDING_HR";
+                } else {
+                    release(r, true);
+                    yield "APPROVED";
+                }
             }
             case "WITHDRAW" -> {
                 require(actor.equals(r.userId()) && pending(r), "只能撤回本人审批中的申请");
-                next = "WITHDRAWN";
                 db.update("UPDATE ent_approval_task SET status='CANCELLED' WHERE request_id=? AND status='PENDING'", r.id());
                 release(r, false);
+                yield "WITHDRAWN";
             }
             default -> throw new ClientException("不支持的操作");
-        }
-        db.update("UPDATE ent_leave_request SET status=?,updated_at=? WHERE id=?", next, now(), r.id());
-        audit(r.id(), actor, a.id(), next, Objects.toString(payload.get("comment"), ""));
-        db.update("UPDATE ent_action SET status='DONE',result=? WHERE id=?", encode(Map.of("requestId", r.id(), "status", next, "traceId", a.id())), a.id());
-        return db.action(a.id(), false);
+        };
     }
 
     @Transactional

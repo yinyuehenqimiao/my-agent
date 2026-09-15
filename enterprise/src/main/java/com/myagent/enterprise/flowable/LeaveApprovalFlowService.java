@@ -4,7 +4,6 @@ import com.myagent.enterprise.dao.mapper.EnterpriseMapper;
 import com.myagent.enterprise.dto.EnterpriseTypes.LeaveRequest;
 import com.myagent.framework.exception.ClientException;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
@@ -27,11 +26,12 @@ import java.util.Map;
  * - 实例 businessKey = 请假申请 id；携带 initiatorId/managerId/hrId/traceId。
  * - 一致性检查：流程状态与业务状态不一致时告警。
  */
-@Slf4j
 @Service
 @RequiredArgsConstructor
 @ConditionalOnProperty(name = "myagent.enterprise.leave.engine", havingValue = "flowable")
 public class LeaveApprovalFlowService {
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(LeaveApprovalFlowService.class);
 
     private final RuntimeService runtimeService;
     private final TaskService taskService;
@@ -69,6 +69,7 @@ public class LeaveApprovalFlowService {
         vars.put("endDate", r.endDate().toString());
         vars.put("userId", r.userId());
         ProcessInstance instance = runtimeService.startProcessInstanceByKey(PROCESS_KEY, requestId, vars);
+        syncApprovalTasks(requestId);
         log.info("leave-approval started request={} instance={} initiator={}", requestId, instance.getId(), initiatorId);
         return instance.getId();
     }
@@ -81,6 +82,7 @@ public class LeaveApprovalFlowService {
         vars.put("decision", decision);
         if (comment != null) vars.put("comment", comment);
         taskService.complete(task.getId(), vars);
+        syncApprovalTasks(requestId);
         log.info("leave-approval task completed request={} actor={} decision={}", requestId, actor, decision);
     }
 
@@ -99,6 +101,30 @@ public class LeaveApprovalFlowService {
         jdbc.update("UPDATE ent_leave_request SET status='WITHDRAWN' WHERE id=?", requestId);
         jdbc.update("UPDATE ent_approval_task SET status='CANCELLED' WHERE request_id=? AND status='PENDING'", requestId);
         log.info("leave-approval withdrawn request={} actor={}", requestId, actor);
+    }
+
+    /**
+     * 将 Flowable 活动人工任务同步到 ent_approval_task，供企业工作台待办列表使用。
+     */
+    public void syncApprovalTasks(String requestId) {
+        jdbc.update("UPDATE ent_approval_task SET status='CANCELLED' WHERE request_id=? AND status='PENDING'", requestId);
+        List<Task> tasks = taskService.createTaskQuery()
+                .processInstanceBusinessKey(requestId)
+                .active()
+                .list();
+        for (Task task : tasks) {
+            String stage = "hr_approval".equals(task.getTaskDefinitionKey()) ? "HR" : "MANAGER";
+            if ("HR".equals(stage)) {
+                jdbc.update("UPDATE ent_leave_request SET status='PENDING_HR',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='PENDING_MANAGER'",
+                        requestId);
+            }
+            jdbc.update(
+                    "INSERT INTO ent_approval_task(id,request_id,assignee_id,stage,status) VALUES(?,?,?,?,'PENDING')",
+                    java.util.UUID.randomUUID().toString().replace("-", ""),
+                    requestId,
+                    task.getAssignee(),
+                    stage);
+        }
     }
 
     /** 一致性检查：流程状态 vs 业务状态 */

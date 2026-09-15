@@ -50,7 +50,7 @@ class AgentAdminControllerTest {
     void toolCatalogRequiresDedicatedViewPermission() {
         doThrow(new ClientException("无权限")).when(policy).requirePermission(any(), eq("tool:view"));
 
-        assertThatThrownBy(controller::listTools).isInstanceOf(ClientException.class);
+        assertThatThrownBy(() -> controller.listTools(1, 20, null)).isInstanceOf(ClientException.class);
         verifyNoInteractions(gateway);
     }
 
@@ -85,7 +85,8 @@ class AgentAdminControllerTest {
 
     @Test
     void routeReadsAndWritesUseSeparatePermissions() {
-        controller.listRoutes();
+        when(routeBindingService.list(any())).thenReturn(List.of());
+        controller.listRoutes(1, 20, null);
         controller.routeOptions();
         controller.saveRoute("leave-route", new RouteBindingService.SaveRequest(
                 "leave-approval", RouteBindingService.TargetType.WORKFLOW, "leave-approval"));
@@ -93,6 +94,7 @@ class AgentAdminControllerTest {
 
         verify(policy, times(2)).requirePermission(any(), eq("route:view"));
         verify(policy, times(2)).requirePermission(any(), eq("route:edit"));
+        verify(routeBindingService).list(any());
         verify(routeBindingService).save(eq("leave-route"), any(),
                 argThat(identity -> "default".equals(identity.getTenantId())));
         verify(routeBindingService).delete(eq("leave-route"),
