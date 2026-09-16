@@ -22,6 +22,18 @@ class WorkflowProcessCompilerTest {
         var second = compiler.compile("leave", process);
         assertEquals(first.contentHash(), second.contentHash());
         assertTrue(first.bpmnXml().contains("workflowTaskDelegate"));
+        assertTrue(first.bpmnXml().contains("nodeType"));
+        assertTrue(first.bpmnXml().contains("nodeVersion"));
+    }
+
+    @Test
+    void configurationChangeInvalidatesContentHash() {
+        WorkflowProcess first = basic();
+        WorkflowProcess second = new WorkflowProcess(
+                List.of(node("s", "start"), new WorkflowProcess.Node("reply", "reply", 1, Map.of("template", "已完成")), node("e", "end")),
+                first.edges());
+        org.junit.jupiter.api.Assertions.assertNotEquals(
+                compiler.compile("leave", first).contentHash(), compiler.compile("leave", second).contentHash());
     }
 
     @Test

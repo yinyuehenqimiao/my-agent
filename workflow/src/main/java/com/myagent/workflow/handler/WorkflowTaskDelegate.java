@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.engine.delegate.DelegateExecution;
 import org.flowable.engine.delegate.JavaDelegate;
+import org.flowable.bpmn.model.FieldExtension;
+import org.flowable.bpmn.model.ServiceTask;
 import org.springframework.stereotype.Component;
 
 /**
@@ -22,9 +24,14 @@ public class WorkflowTaskDelegate implements JavaDelegate {
     @Override
     public void execute(DelegateExecution execution) {
         String activityId = execution.getCurrentActivityId();
-        WorkflowTaskHandler handler = registry.get(activityId);
+        String nodeType = field(execution, "nodeType");
+        String versionText = field(execution, "nodeVersion");
+        WorkflowTaskHandler handler = nodeType == null
+                ? registry.getLegacy(activityId)
+                : registry.get(nodeType, parseVersion(versionText));
         if (handler == null) {
-            throw new IllegalStateException("未注册的工作流任务处理器: " + activityId);
+            throw new IllegalStateException("未注册的工作流任务处理器: "
+                    + (nodeType == null ? activityId : nodeType + ":v" + versionText));
         }
         try {
             handler.handle(execution);
@@ -32,6 +39,25 @@ public class WorkflowTaskDelegate implements JavaDelegate {
             log.error("workflow task handler failed activity={} traceId={}", activityId, execution.getProcessInstanceBusinessKey(), e);
             if (e instanceof RuntimeException re) throw re;
             throw new RuntimeException(e);
+        }
+    }
+
+    private static String field(DelegateExecution execution, String name) {
+        if (!(execution.getCurrentFlowElement() instanceof ServiceTask task)) return null;
+        return task.getFieldExtensions().stream()
+                .filter(item -> name.equals(item.getFieldName()))
+                .map(FieldExtension::getStringValue)
+                .filter(value -> value != null && !value.isBlank())
+                .findFirst().orElse(null);
+    }
+
+    private static int parseVersion(String value) {
+        try {
+            int version = Integer.parseInt(value);
+            if (version < 1) throw new NumberFormatException();
+            return version;
+        } catch (NumberFormatException ex) {
+            throw new IllegalStateException("工作流节点版本不合法: " + value);
         }
     }
 }

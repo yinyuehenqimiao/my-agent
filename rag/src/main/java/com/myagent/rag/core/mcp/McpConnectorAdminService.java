@@ -11,10 +11,15 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /** 管理面：登记、发现、审核工具。运行时注册必须读取已审核且启用的数据。 */
 @Service
 public class McpConnectorAdminService {
+    private static final ObjectMapper JSON = new ObjectMapper().findAndRegisterModules();
     private final JdbcTemplate jdbc;
     private final PolicyDecisionService policy;
     private final McpCatalogDiscoveryService catalog;
@@ -39,10 +44,8 @@ public class McpConnectorAdminService {
         ConnectorRow connector = connector(identity.getTenantId(), connectorId);
         McpCatalogSnapshot snapshot = catalog.refresh(new McpConnectorDefinition(connector.tenantId(), connector.connectorId(), connector.endpoint(), connector.secretRef()),
                 tokenProvider.resolve(connector.secretRef()));
-        jdbc.update("DELETE FROM mcp_catalog_tool WHERE tenant_id=? AND connector_id=?", connector.tenantId(), connector.connectorId());
         for (McpCatalogTool tool : snapshot.tools()) {
-            jdbc.update("INSERT INTO mcp_catalog_tool(tenant_id,connector_id,tool_id,title,description,review_status,enabled,discovered_at) VALUES(?,?,?,?,?,'PENDING_REVIEW',FALSE,?)",
-                    connector.tenantId(), connector.connectorId(), tool.toolId(), tool.title(), tool.description(), Timestamp.from(snapshot.discoveredAt()));
+            saveDiscoveredTool(connector, snapshot, tool);
         }
         jdbc.update("UPDATE mcp_connector SET status='DISCOVERED',updated_by=?,updated_at=? WHERE tenant_id=? AND connector_id=?",
                 identity.getUserId(), Timestamp.from(Instant.now()), connector.tenantId(), connector.connectorId());
@@ -68,7 +71,7 @@ public class McpConnectorAdminService {
 
     public List<ToolView> tools(ExecutionIdentity identity, String connectorId) {
         authorize(identity);
-        return jdbc.query("SELECT tool_id,title,description,review_status,enabled,discovered_at FROM mcp_catalog_tool WHERE tenant_id=? AND connector_id=? ORDER BY tool_id",
+        return jdbc.query("SELECT tool_id,title,description,review_status,enabled,discovered_at,contract_version,schema_hash FROM mcp_catalog_tool WHERE tenant_id=? AND connector_id=? ORDER BY tool_id",
                 new DataClassRowMapper<>(ToolView.class), identity.getTenantId(), connectorId);
     }
 
@@ -77,6 +80,30 @@ public class McpConnectorAdminService {
                 new DataClassRowMapper<>(ConnectorRow.class), tenantId, connectorId);
         if (rows.isEmpty()) throw new ClientException("连接器不存在或不属于当前租户");
         return rows.get(0);
+    }
+
+    private void saveDiscoveredTool(ConnectorRow connector, McpCatalogSnapshot snapshot, McpCatalogTool tool) {
+        String schema;
+        try { schema = JSON.writeValueAsString(tool.definition()); }
+        catch (Exception ex) { throw new ClientException("工具 Schema 无法序列化：" + tool.toolId()); }
+        String hash = sha256(schema);
+        List<ToolContractRow> existing = jdbc.query("SELECT contract_version,schema_hash FROM mcp_catalog_tool WHERE tenant_id=? AND connector_id=? AND tool_id=?",
+                new DataClassRowMapper<>(ToolContractRow.class), connector.tenantId(), connector.connectorId(), tool.toolId());
+        if (existing.isEmpty()) {
+            jdbc.update("INSERT INTO mcp_catalog_tool(tenant_id,connector_id,tool_id,title,description,review_status,enabled,discovered_at,contract_version,schema_hash,tool_schema) VALUES(?,?,?,?,?,'PENDING_REVIEW',FALSE,?,1,?,?)",
+                    connector.tenantId(), connector.connectorId(), tool.toolId(), tool.title(), tool.description(), Timestamp.from(snapshot.discoveredAt()), hash, schema);
+            return;
+        }
+        ToolContractRow old = existing.get(0);
+        boolean changed = !hash.equals(old.schemaHash());
+        jdbc.update("UPDATE mcp_catalog_tool SET title=?,description=?,discovered_at=?,contract_version=?,schema_hash=?,tool_schema=?,review_status=CASE WHEN ? THEN 'PENDING_REVIEW' ELSE review_status END,enabled=CASE WHEN ? THEN FALSE ELSE enabled END WHERE tenant_id=? AND connector_id=? AND tool_id=?",
+                tool.title(), tool.description(), Timestamp.from(snapshot.discoveredAt()), changed ? old.contractVersion() + 1 : old.contractVersion(), hash, schema,
+                changed, changed, connector.tenantId(), connector.connectorId(), tool.toolId());
+    }
+
+    private static String sha256(String value) {
+        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
+        catch (Exception ex) { throw new IllegalStateException(ex); }
     }
     private void authorize(ExecutionIdentity identity) { policy.requirePermission(identity, "knowledge:authorize"); }
     private static void validate(ConnectorInput input) {
@@ -89,5 +116,6 @@ public class McpConnectorAdminService {
     public record ReviewInput(String reviewStatus, boolean enabled) { }
     public record ConnectorRow(String tenantId, String connectorId, String displayName, String endpoint, String secretRef, String status, String updatedBy, Timestamp updatedAt) { }
     public record ConnectorView(String tenantId, String connectorId, String displayName, String endpoint, String status, Timestamp updatedAt) { }
-    public record ToolView(String toolId, String title, String description, String reviewStatus, boolean enabled, Timestamp discoveredAt) { }
+    public record ToolView(String toolId, String title, String description, String reviewStatus, boolean enabled, Timestamp discoveredAt, int contractVersion, String schemaHash) { }
+    private record ToolContractRow(int contractVersion, String schemaHash) { }
 }

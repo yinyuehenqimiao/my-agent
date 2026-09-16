@@ -7,21 +7,40 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 工作流任务处理器注册表：按节点 id 注册处理器。
- * 业务模块在启动时通过 {@link #register(String, WorkflowTaskHandler)} 注册。
+ * 工作流任务处理器注册表：动态流程按节点类型和契约版本注册；旧 BPMN 保留节点 id 兼容入口。
  */
 @Slf4j
 @Component
 public class WorkflowTaskHandlerRegistry {
 
     private final Map<String, WorkflowTaskHandler> handlers = new ConcurrentHashMap<>();
+    private final Map<String, WorkflowTaskHandler> legacyHandlers = new ConcurrentHashMap<>();
 
-    public void register(String activityId, WorkflowTaskHandler handler) {
-        handlers.put(activityId, handler);
-        log.info("workflow task handler registered: {}", activityId);
+    /** 注册动态业务积木执行器。 */
+    public void register(String nodeType, int nodeVersion, WorkflowTaskHandler handler) {
+        String key = key(nodeType, nodeVersion);
+        handlers.put(key, handler);
+        log.info("workflow node handler registered: {}", key);
     }
 
-    public WorkflowTaskHandler get(String activityId) {
-        return handlers.get(activityId);
+    /** 旧 BPMN 兼容入口，新动态流程不得使用。 */
+    public void register(String activityId, WorkflowTaskHandler handler) {
+        legacyHandlers.put(activityId, handler);
+        log.info("legacy workflow task handler registered: {}", activityId);
+    }
+
+    public WorkflowTaskHandler get(String nodeType, int nodeVersion) {
+        return handlers.get(key(nodeType, nodeVersion));
+    }
+
+    public WorkflowTaskHandler getLegacy(String activityId) {
+        return legacyHandlers.get(activityId);
+    }
+
+    private static String key(String nodeType, int nodeVersion) {
+        if (nodeType == null || nodeType.isBlank() || nodeVersion < 1) {
+            throw new IllegalArgumentException("节点类型和版本不合法");
+        }
+        return nodeType.trim() + ":v" + nodeVersion;
     }
 }

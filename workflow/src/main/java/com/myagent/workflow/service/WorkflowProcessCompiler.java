@@ -33,8 +33,7 @@ public class WorkflowProcessCompiler {
                 case "start" -> xml.append("<startEvent id=\"").append(id).append("\"/>");
                 case "end" -> xml.append("<endEvent id=\"").append(id).append("\"/>");
                 case "condition" -> xml.append("<exclusiveGateway id=\"").append(id).append("\"/>");
-                case "reply" -> xml.append("<serviceTask id=\"").append(id)
-                        .append("\" flowable:delegateExpression=\"${workflowTaskDelegate}\" flowable:type=\"template\"/>");
+                case "reply" -> appendServiceTask(xml, id, node.type(), node.version());
                 default -> throw new ClientException("不支持的节点类型：" + node.type());
             }
         }
@@ -49,6 +48,16 @@ public class WorkflowProcessCompiler {
         xml.append("</process></definitions>");
         String bpmn = xml.toString();
         return new CompiledProcess(bpmn, sha256(normalize(process)));
+    }
+
+    private static void appendServiceTask(StringBuilder xml, String id, String type, Integer version) {
+        xml.append("<serviceTask id=\"").append(id)
+                .append("\" flowable:delegateExpression=\"${workflowTaskDelegate}\" flowable:type=\"template\">")
+                .append("<extensionElements>")
+                .append("<flowable:field name=\"nodeType\"><flowable:string>").append(escapeXml(type)).append("</flowable:string></flowable:field>")
+                .append("<flowable:field name=\"nodeVersion\"><flowable:string>").append(version == null ? 1 : version).append("</flowable:string></flowable:field>")
+                .append("<flowable:field name=\"nodeInstanceId\"><flowable:string>").append(escapeXml(id)).append("</flowable:string></flowable:field>")
+                .append("</extensionElements></serviceTask>");
     }
 
     public void validate(WorkflowProcess process) {
@@ -102,7 +111,13 @@ public class WorkflowProcessCompiler {
     private static boolean blank(String value) { return value == null || value.isBlank(); }
     private static String escapeId(String value) { return value.replaceAll("[^A-Za-z0-9_]", "_"); }
     private static String escapeXml(String value) { return value.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;"); }
-    private static String normalize(WorkflowProcess process) { return process.nodes().stream().map(n -> n.id() + ":" + n.type() + ":" + n.version()).sorted().collect(Collectors.joining("|")) + "#" + process.edges().stream().map(e -> e.id() + ":" + e.source() + ":" + e.target() + ":" + e.outlet() + ":" + e.condition()).sorted().collect(Collectors.joining("|")); }
+    private static String normalize(WorkflowProcess process) { return process.nodes().stream().map(n -> n.id() + ":" + n.type() + ":" + n.version() + ":" + canonical(n.config())).sorted().collect(Collectors.joining("|")) + "#" + process.edges().stream().map(e -> e.id() + ":" + e.source() + ":" + e.target() + ":" + e.outlet() + ":" + e.condition()).sorted().collect(Collectors.joining("|")); }
+    private static String canonical(Object value) {
+        if (value == null) return "null";
+        if (value instanceof Map<?, ?> map) return map.entrySet().stream().sorted(java.util.Comparator.comparing(entry -> String.valueOf(entry.getKey()))).map(entry -> entry.getKey() + "=" + canonical(entry.getValue())).collect(Collectors.joining(",", "{", "}"));
+        if (value instanceof List<?> list) return list.stream().map(WorkflowProcessCompiler::canonical).collect(Collectors.joining(",", "[", "]"));
+        return String.valueOf(value);
+    }
     private static String sha256(String text) { try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8))); } catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); } }
 
     public record CompiledProcess(String bpmnXml, String contentHash) { }

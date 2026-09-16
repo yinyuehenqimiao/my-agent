@@ -31,6 +31,7 @@ class McpConnectorAdminServiceTest {
         jdbc = new JdbcTemplate(dataSource);
         jdbc.execute("DROP ALL OBJECTS");
         new ResourceDatabasePopulator(new FileSystemResource("../resources/database/upgrades/v0.6.0/01_mcp_catalog.sql")).execute(dataSource);
+        new ResourceDatabasePopulator(new FileSystemResource("../resources/database/upgrades/v0.9.0/02_mcp_tool_contract.sql")).execute(dataSource);
         var remote = new McpRemoteToolDiscovery() {
             @Override public List<Tool> discover(McpConnectorDefinition connector, String token) {
                 return List.of(Tool.builder().name("get_leave_balance").title("查询年假").description("查询本人年假余额")
@@ -57,6 +58,22 @@ class McpConnectorAdminServiceTest {
         assertThat(service.tools(admin, "erp")).singleElement().satisfies(tool -> {
             assertThat(tool.reviewStatus()).isEqualTo("APPROVED");
             assertThat(tool.enabled()).isTrue();
+        });
+    }
+
+    @Test
+    void rediscoveryKeepsApprovalWhenContractIsUnchanged() {
+        service.save(admin, new McpConnectorAdminService.ConnectorInput("erp", "人事 ERP", "http://erp.example/mcp", "vault:erp-a"));
+        service.discover(admin, "erp");
+        service.review(admin, "erp", "get_leave_balance", new McpConnectorAdminService.ReviewInput("APPROVED", true));
+
+        service.discover(admin, "erp");
+
+        assertThat(service.tools(admin, "erp")).singleElement().satisfies(tool -> {
+            assertThat(tool.reviewStatus()).isEqualTo("APPROVED");
+            assertThat(tool.enabled()).isTrue();
+            assertThat(tool.contractVersion()).isEqualTo(1);
+            assertThat(tool.schemaHash()).hasSize(64);
         });
     }
 }
