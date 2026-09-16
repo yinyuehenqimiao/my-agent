@@ -17,7 +17,11 @@ import java.util.List;
 public class McpIntentBindingService {
     private final JdbcTemplate jdbc;
     private final PolicyDecisionService policy;
-    public McpIntentBindingService(JdbcTemplate jdbc, PolicyDecisionService policy) { this.jdbc = jdbc; this.policy = policy; }
+    private final McpCatalogRevisionService revisions;
+    public McpIntentBindingService(JdbcTemplate jdbc, PolicyDecisionService policy,
+                                   McpCatalogRevisionService revisions) {
+        this.jdbc = jdbc; this.policy = policy; this.revisions = revisions;
+    }
 
     @Transactional
     public void bind(ExecutionIdentity identity, BindingInput input) {
@@ -29,12 +33,14 @@ public class McpIntentBindingService {
         jdbc.update("DELETE FROM mcp_intent_binding WHERE tenant_id=? AND intent_code=?", identity.getTenantId(), input.intentCode());
         jdbc.update("INSERT INTO mcp_intent_binding(tenant_id,intent_code,connector_id,tool_id,status,created_by,updated_at) VALUES(?,?,?,?, 'DRAFT', ?, ?)",
                 identity.getTenantId(), input.intentCode(), input.connectorId(), input.toolId(), identity.getUserId(), Timestamp.from(Instant.now()));
+        revisions.bump(identity.getTenantId());
     }
     @Transactional
     public void publish(ExecutionIdentity identity, String intentCode) {
         policy.requirePermission(identity, "knowledge:authorize");
         int changed = jdbc.update("UPDATE mcp_intent_binding SET status='PUBLISHED',updated_at=? WHERE tenant_id=? AND intent_code=?", Timestamp.from(Instant.now()), identity.getTenantId(), intentCode);
         if (changed != 1) throw new ClientException("意图工具绑定不存在");
+        revisions.bump(identity.getTenantId());
     }
     public List<BindingView> list(ExecutionIdentity identity) {
         policy.requirePermission(identity, "knowledge:authorize");

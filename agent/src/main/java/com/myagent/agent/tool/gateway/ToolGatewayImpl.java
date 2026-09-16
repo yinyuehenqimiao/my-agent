@@ -8,6 +8,7 @@ import com.myagent.framework.tool.ToolGateway;
 import com.myagent.framework.tool.ToolHandler;
 import com.myagent.framework.tool.ToolInvocation;
 import com.myagent.framework.tool.ToolResult;
+import com.myagent.framework.tool.RuntimeToolCatalog;
 import com.myagent.system.auth.service.PolicyDecisionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +41,14 @@ public class ToolGatewayImpl implements ToolGateway {
     private final ToolExecutionAuditService executionAuditService;
 
     private final Map<String, ToolEntry> registry = new ConcurrentHashMap<>();
+
+    /** 动态 ERP/MCP 目录由下游模块提供；没有配置时仍可只运行静态内部工具。 */
+    private List<RuntimeToolCatalog> runtimeCatalogs = List.of();
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setRuntimeCatalogs(List<RuntimeToolCatalog> runtimeCatalogs) {
+        this.runtimeCatalogs = runtimeCatalogs == null ? List.of() : List.copyOf(runtimeCatalogs);
+    }
     private final ExecutorService executionPool = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "tool-gateway-exec");
         t.setDaemon(true);
@@ -71,6 +80,32 @@ public class ToolGatewayImpl implements ToolGateway {
     }
 
     @Override
+    public List<ToolDefinition> listDefinitions(ExecutionIdentity identity, ToolDefinition.Source source) {
+        Map<String, ToolDefinition> merged = new HashMap<>();
+        registry.values().stream().map(ToolEntry::definition)
+                .filter(def -> visibleFrom(def, source))
+                .forEach(def -> merged.put(def.getName(), def));
+        if (identity != null && identity.getUserId() != null) {
+            for (RuntimeToolCatalog catalog : runtimeCatalogs) {
+                catalog.list(identity, source).forEach(def -> merged.put(def.getName(), def));
+            }
+        }
+        return merged.values().stream()
+                .sorted(java.util.Comparator.comparing(ToolDefinition::getName))
+                .toList();
+    }
+
+    @Override
+    public long catalogRevision(ExecutionIdentity identity) {
+        if (identity == null) return 0L;
+        long revision = 0L;
+        for (RuntimeToolCatalog catalog : runtimeCatalogs) {
+            revision = Math.max(revision, catalog.revision(identity));
+        }
+        return revision;
+    }
+
+    @Override
     public ToolResult invoke(ToolInvocation invocation) {
         String traceId = ensureTrace(invocation);
         long startedNanos = System.nanoTime();
@@ -82,6 +117,9 @@ public class ToolGatewayImpl implements ToolGateway {
         }
         // 2. 定义加载
         ToolEntry entry = registry.get(invocation.getToolName());
+        if (entry == null) {
+            entry = resolveRuntimeTool(identity, invocation.getToolName(), invocation.getSource());
+        }
         if (entry == null) {
             audit(invocation, traceId, "DENY", "未注册工具: " + invocation.getToolName());
             return ToolResult.error("TOOL_NOT_FOUND", "未注册工具", traceId);
@@ -261,5 +299,23 @@ public class ToolGatewayImpl implements ToolGateway {
 
     private boolean requiresDurableAudit(ToolDefinition definition) {
         return !definition.isReadOnly() || definition.getRiskLevel() == ToolDefinition.RiskLevel.HIGH;
+    }
+
+    private ToolEntry resolveRuntimeTool(ExecutionIdentity identity, String toolName, ToolDefinition.Source source) {
+        for (RuntimeToolCatalog catalog : runtimeCatalogs) {
+            var resolved = catalog.resolve(identity, toolName, source);
+            if (resolved.isPresent()) {
+                RuntimeToolCatalog.ResolvedTool tool = resolved.get();
+                return new ToolEntry(tool.definition(), tool.handler());
+            }
+        }
+        return null;
+    }
+
+    private boolean visibleFrom(ToolDefinition definition, ToolDefinition.Source source) {
+        return definition.isEnabled()
+                && (source == null || definition.getAllowedSources() == null
+                || definition.getAllowedSources().isEmpty()
+                || definition.getAllowedSources().contains(source));
     }
 }

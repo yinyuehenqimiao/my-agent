@@ -1,5 +1,7 @@
 package com.myagent.framework.tool;
 
+import com.myagent.framework.context.ExecutionIdentity;
+
 import java.util.List;
 
 /**
@@ -30,4 +32,17 @@ public interface ToolGateway {
      * 该方法不暴露处理器，也不提供绕过 invoke 安全管道的执行入口。
      */
     List<ToolDefinition> listDefinitions();
+
+    /**
+     * 返回指定租户和调用来源可见的静态及动态工具。
+     * 旧调用保留 {@link #listDefinitions()}，只用于进程内静态工具管理。
+     */
+    default List<ToolDefinition> listDefinitions(ExecutionIdentity identity, ToolDefinition.Source source) {
+        return listDefinitions();
+    }
+
+    /** 当前租户动态目录版本；静态目录固定为 0。 */
+    default long catalogRevision(ExecutionIdentity identity) {
+        return 0L;
+    }
 }

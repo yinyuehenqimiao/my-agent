@@ -212,9 +212,14 @@ public class AgentChatServiceImpl implements AgentChatService {
             return;
         }
 
-        ActiveAgent activeAgent = decision == RouteDecision.WORKFLOW
-                ? agentProvider.getWorkflowAgent(plan.route().getTarget())
-                : agentProvider.getAgent();
+        ActiveAgent activeAgent;
+        if (decision == RouteDecision.WORKFLOW) {
+            activeAgent = agentProvider.getWorkflowAgent(plan.route().getTarget());
+        } else {
+            activeAgent = agentProvider.getAgent(identity);
+            // 兼容不具备身份感知能力的自定义 Provider；正式实现不会返回 null。
+            if (activeAgent == null) activeAgent = agentProvider.getAgent();
+        }
         if (decision == RouteDecision.WORKFLOW) {
             workflowStateService.activate(tenantId, userId, conversationId, plan.route().getTarget());
             sender.sendEvent(AgentSSEEventType.WORKFLOW_PROGRESS.value(), Map.of(

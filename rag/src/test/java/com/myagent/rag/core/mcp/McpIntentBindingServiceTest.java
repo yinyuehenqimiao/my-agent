@@ -29,7 +29,7 @@ class McpIntentBindingServiceTest {
         jdbc.update("INSERT INTO mcp_connector VALUES('tenant-a','erp','ERP','http://erp/mcp','vault:erp','DISCOVERED','admin',CURRENT_TIMESTAMP)");
         jdbc.update("INSERT INTO mcp_catalog_tool VALUES('tenant-a','erp','get_leave_balance','年假','余额','PENDING_REVIEW',FALSE,CURRENT_TIMESTAMP)");
         PolicyDecisionService policy = mock(PolicyDecisionService.class); doNothing().when(policy).requirePermission(any(), any());
-        service = new McpIntentBindingService(jdbc, policy);
+        service = new McpIntentBindingService(jdbc, policy, mock(McpCatalogRevisionService.class));
         admin = LoginUser.builder().tenantId("tenant-a").userId("admin").build();
     }
 

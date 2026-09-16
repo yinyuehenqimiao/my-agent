@@ -40,7 +40,9 @@ class McpConnectorAdminServiceTest {
         };
         PolicyDecisionService policy = mock(PolicyDecisionService.class);
         doNothing().when(policy).requirePermission(any(), any());
-        service = new McpConnectorAdminService(jdbc, policy, new McpCatalogDiscoveryService(remote), secretRef -> "short-lived-discovery-token");
+        McpCatalogRevisionService revisions = mock(McpCatalogRevisionService.class);
+        service = new McpConnectorAdminService(jdbc, policy, new McpCatalogDiscoveryService(remote),
+                secretRef -> "short-lived-discovery-token", revisions);
         admin = LoginUser.builder().tenantId("tenant-a").userId("admin").username("admin").build();
     }
 

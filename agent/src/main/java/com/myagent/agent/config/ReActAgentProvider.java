@@ -53,6 +53,7 @@ public class ReActAgentProvider {
     private final AgentContextCompactionMiddleware contextCompactionMiddleware;
 
     private volatile CachedAgent cached;
+    private final Map<String, CachedAgent> tenantUserAgents = new ConcurrentHashMap<>();
     private final Map<String, CachedAgent> workflowAgents = new ConcurrentHashMap<>();
 
     @org.springframework.beans.factory.annotation.Value("${myagent.enterprise.enabled:false}")
@@ -80,6 +81,23 @@ public class ReActAgentProvider {
             log.info("ReActAgent 已构建, maxIters: {}, maxRetries: {}",
                     agentProperties.getMaxIters(), agentProperties.getMaxRetries());
             return new ActiveAgent(agent, catalog);
+        }
+    }
+
+    /** 按服务端身份隔离动态工具快照，避免跨租户或跨用户复用带身份的工具适配器。 */
+    public ActiveAgent getAgent(com.myagent.framework.context.ExecutionIdentity identity) {
+        if (identity == null || identity.getUserId() == null) return getAgent();
+        String cacheKey = identity.getTenantId() + ":" + identity.getUserId();
+        String persona = resolvePersona();
+        ResolvedCatalog catalog = toolCatalog.resolve(identity);
+        CachedAgent current = tenantUserAgents.get(cacheKey);
+        if (matches(current, persona, catalog)) return new ActiveAgent(current.agent(), current.catalog());
+        synchronized (tenantUserAgents) {
+            current = tenantUserAgents.get(cacheKey);
+            if (matches(current, persona, catalog)) return new ActiveAgent(current.agent(), current.catalog());
+            CachedAgent created = new CachedAgent(persona, catalog, buildAgent(persona, catalog));
+            tenantUserAgents.put(cacheKey, created);
+            return new ActiveAgent(created.agent(), created.catalog());
         }
     }
 
@@ -127,6 +145,7 @@ public class ReActAgentProvider {
         }
         current.agent().clearStateCache(userId, sessionId);
         workflowAgents.values().forEach(item -> item.agent().clearStateCache(userId, sessionId));
+        tenantUserAgents.values().forEach(item -> item.agent().clearStateCache(userId, sessionId));
     }
 
     private boolean matches(CachedAgent current, String persona, ResolvedCatalog catalog) {

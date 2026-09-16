@@ -46,16 +46,21 @@ public class AgentAdminController {
     public Result<Map<String, Object>> listTools(
             @RequestParam(defaultValue = "1") long current,
             @RequestParam(defaultValue = "20") long size,
-            @RequestParam(required = false) String keyword) {
-        policyDecisionService.requirePermission(UserContext.requireIdentity(), "tool:view");
-        List<ToolDefinition> all = toolGateway.listDefinitions();
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "ADMIN") ToolDefinition.Source source) {
+        ExecutionIdentity identity = UserContext.requireIdentity();
+        policyDecisionService.requirePermission(identity, "tool:view");
+        List<ToolDefinition> all = toolGateway.listDefinitions(identity, source);
         String kw = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
         List<ToolDefinition> filtered = kw.isEmpty() ? all : all.stream()
                 .filter(tool -> containsIgnoreCase(tool.getName(), kw)
                         || containsIgnoreCase(tool.getDescription(), kw)
                         || containsIgnoreCase(tool.getPermissionCode(), kw))
                 .toList();
-        return Results.success(paginate(filtered, current, size));
+        Map<String, Object> page = paginate(filtered, current, size);
+        page.put("catalogRevision", toolGateway.catalogRevision(identity));
+        page.put("source", source.name());
+        return Results.success(page);
     }
 
     @GetMapping("/routes")

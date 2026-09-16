@@ -24,10 +24,12 @@ public class McpConnectorAdminService {
     private final PolicyDecisionService policy;
     private final McpCatalogDiscoveryService catalog;
     private final McpDiscoveryTokenProvider tokenProvider;
+    private final McpCatalogRevisionService revisions;
 
     public McpConnectorAdminService(JdbcTemplate jdbc, PolicyDecisionService policy, McpCatalogDiscoveryService catalog,
-            McpDiscoveryTokenProvider tokenProvider) {
+            McpDiscoveryTokenProvider tokenProvider, McpCatalogRevisionService revisions) {
         this.jdbc = jdbc; this.policy = policy; this.catalog = catalog; this.tokenProvider = tokenProvider;
+        this.revisions = revisions;
     }
 
     @Transactional
@@ -36,6 +38,7 @@ public class McpConnectorAdminService {
         jdbc.update("DELETE FROM mcp_connector WHERE tenant_id=? AND connector_id=?", identity.getTenantId(), input.connectorId());
         jdbc.update("INSERT INTO mcp_connector(tenant_id,connector_id,display_name,endpoint,secret_ref,status,updated_by,updated_at) VALUES(?,?,?,?,?,'DRAFT',?,?)",
                 identity.getTenantId(), input.connectorId(), input.displayName(), input.endpoint(), input.secretRef(), identity.getUserId(), Timestamp.from(Instant.now()));
+        revisions.bump(identity.getTenantId());
     }
 
     @Transactional
@@ -49,6 +52,7 @@ public class McpConnectorAdminService {
         }
         jdbc.update("UPDATE mcp_connector SET status='DISCOVERED',updated_by=?,updated_at=? WHERE tenant_id=? AND connector_id=?",
                 identity.getUserId(), Timestamp.from(Instant.now()), connector.tenantId(), connector.connectorId());
+        revisions.bump(identity.getTenantId());
         return tools(identity, connectorId);
     }
 
@@ -61,6 +65,7 @@ public class McpConnectorAdminService {
         int changed = jdbc.update("UPDATE mcp_catalog_tool SET review_status=?,enabled=? WHERE tenant_id=? AND connector_id=? AND tool_id=?",
                 input.reviewStatus(), "APPROVED".equals(input.reviewStatus()) && input.enabled(), identity.getTenantId(), connectorId, toolId);
         if (changed != 1) throw new ClientException("工具不存在或不属于当前租户");
+        revisions.bump(identity.getTenantId());
     }
 
     public List<ConnectorView> connectors(ExecutionIdentity identity) {
@@ -90,15 +95,20 @@ public class McpConnectorAdminService {
         List<ToolContractRow> existing = jdbc.query("SELECT contract_version,schema_hash FROM mcp_catalog_tool WHERE tenant_id=? AND connector_id=? AND tool_id=?",
                 new DataClassRowMapper<>(ToolContractRow.class), connector.tenantId(), connector.connectorId(), tool.toolId());
         if (existing.isEmpty()) {
-            jdbc.update("INSERT INTO mcp_catalog_tool(tenant_id,connector_id,tool_id,title,description,review_status,enabled,discovered_at,contract_version,schema_hash,tool_schema) VALUES(?,?,?,?,?,'PENDING_REVIEW',FALSE,?,1,?,?)",
-                    connector.tenantId(), connector.connectorId(), tool.toolId(), tool.title(), tool.description(), Timestamp.from(snapshot.discoveredAt()), hash, schema);
+            jdbc.update("INSERT INTO mcp_catalog_tool(tenant_id,connector_id,tool_id,title,description,review_status,enabled,discovered_at,contract_version,schema_hash,tool_schema,read_only) VALUES(?,?,?,?,?,'PENDING_REVIEW',FALSE,?,1,?,?,?)",
+                    connector.tenantId(), connector.connectorId(), tool.toolId(), tool.title(), tool.description(), Timestamp.from(snapshot.discoveredAt()), hash, schema, readOnly(tool));
             return;
         }
         ToolContractRow old = existing.get(0);
         boolean changed = !hash.equals(old.schemaHash());
-        jdbc.update("UPDATE mcp_catalog_tool SET title=?,description=?,discovered_at=?,contract_version=?,schema_hash=?,tool_schema=?,review_status=CASE WHEN ? THEN 'PENDING_REVIEW' ELSE review_status END,enabled=CASE WHEN ? THEN FALSE ELSE enabled END WHERE tenant_id=? AND connector_id=? AND tool_id=?",
+        jdbc.update("UPDATE mcp_catalog_tool SET title=?,description=?,discovered_at=?,contract_version=?,schema_hash=?,tool_schema=?,read_only=?,review_status=CASE WHEN ? THEN 'PENDING_REVIEW' ELSE review_status END,enabled=CASE WHEN ? THEN FALSE ELSE enabled END WHERE tenant_id=? AND connector_id=? AND tool_id=?",
                 tool.title(), tool.description(), Timestamp.from(snapshot.discoveredAt()), changed ? old.contractVersion() + 1 : old.contractVersion(), hash, schema,
-                changed, changed, connector.tenantId(), connector.connectorId(), tool.toolId());
+                readOnly(tool), changed, changed, connector.tenantId(), connector.connectorId(), tool.toolId());
+    }
+
+    private static boolean readOnly(McpCatalogTool tool) {
+        return tool.definition().annotations() != null
+                && Boolean.TRUE.equals(tool.definition().annotations().readOnlyHint());
     }
 
     private static String sha256(String value) {

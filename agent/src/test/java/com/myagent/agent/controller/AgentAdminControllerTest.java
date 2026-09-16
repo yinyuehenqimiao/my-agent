@@ -50,7 +50,8 @@ class AgentAdminControllerTest {
     void toolCatalogRequiresDedicatedViewPermission() {
         doThrow(new ClientException("无权限")).when(policy).requirePermission(any(), eq("tool:view"));
 
-        assertThatThrownBy(() -> controller.listTools(1, 20, null)).isInstanceOf(ClientException.class);
+        assertThatThrownBy(() -> controller.listTools(1, 20, null, ToolDefinition.Source.ADMIN))
+                .isInstanceOf(ClientException.class);
         verifyNoInteractions(gateway);
     }
 

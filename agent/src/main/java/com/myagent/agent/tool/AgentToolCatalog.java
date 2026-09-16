@@ -28,6 +28,9 @@ import com.myagent.rag.core.prompt.AgentPromptResolver;
 import com.myagent.rag.core.prompt.AgentPromptSlot;
 import com.myagent.rag.service.KnowledgeSearchFacade;
 import com.myagent.framework.tool.ToolDefinition.Source;
+import com.myagent.framework.context.ExecutionIdentity;
+import com.myagent.framework.tool.ToolDefinition;
+import com.myagent.framework.tool.ToolGateway;
 import io.agentscope.core.tool.Toolkit;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 import lombok.RequiredArgsConstructor;
@@ -64,6 +67,8 @@ public class AgentToolCatalog {
     @org.springframework.beans.factory.annotation.Autowired
     private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ToolGateway toolGateway;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.myagent.framework.workflow.PublishedWorkflowCatalog publishedWorkflowCatalog;
 
     /**
@@ -92,6 +97,23 @@ public class AgentToolCatalog {
         catalog.unavailableToolIds.forEach(toolId ->
                 log.warn("意图树配置的 MCP 工具当前不可用, toolId: {}", toolId));
         return toolkit;
+    }
+
+    /**
+     * 生产运行时目录：动态工具必须同时满足租户启用和已发布意图绑定，且调用仍经过 Tool Gateway。
+     */
+    public ResolvedCatalog resolve(ExecutionIdentity identity) {
+        if (toolGateway == null || identity == null) return resolve();
+        List<McpToolBinding> bindings = toolGateway.listDefinitions(identity, Source.REACT).stream()
+                .filter(ToolDefinition::isReadOnly)
+                .filter(definition -> definition.getName().startsWith("mcp:"))
+                .map(definition -> new McpToolBinding(definition.getName(), definition.getName(),
+                        definition.getDescription(), new GatewayMcpToolExecutor(
+                        toolGateway, definition, identity, objectMapper)))
+                .toList();
+        return new ResolvedCatalog(resolveKnowledgeToolDescription(), bindings, List.of(),
+                enterpriseTools == null ? Map.of() : EnterpriseTools.displayNames(),
+                toolGateway.catalogRevision(identity));
     }
 
     /** 固定流程展示快照不读取知识库提示词与 MCP 注册表，避免无关组件故障拖垮业务办理。 */
@@ -211,7 +233,7 @@ public class AgentToolCatalog {
                 String knowledgeToolDescription,
                 List<McpToolBinding> bindings,
                 List<String> unavailableToolIds) {
-            this(knowledgeToolDescription, bindings, unavailableToolIds, Map.of());
+            this(knowledgeToolDescription, bindings, unavailableToolIds, Map.of(), 0L);
         }
 
         public ResolvedCatalog(
@@ -219,6 +241,15 @@ public class AgentToolCatalog {
                 List<McpToolBinding> bindings,
                 List<String> unavailableToolIds,
                 Map<String, String> additionalDisplayNames) {
+            this(knowledgeToolDescription, bindings, unavailableToolIds, additionalDisplayNames, 0L);
+        }
+
+        public ResolvedCatalog(
+                String knowledgeToolDescription,
+                List<McpToolBinding> bindings,
+                List<String> unavailableToolIds,
+                Map<String, String> additionalDisplayNames,
+                long catalogRevision) {
             this.knowledgeToolDescription = knowledgeToolDescription;
             this.bindings = List.copyOf(bindings);
             this.unavailableToolIds = List.copyOf(unavailableToolIds);
@@ -234,7 +265,7 @@ public class AgentToolCatalog {
                             binding.displayName(),
                             binding.description(),
                             binding.executor().getToolDefinition()))
-                    .toList());
+                    .toList(), catalogRevision);
         }
 
         public ToolCatalogFingerprint fingerprint() {
@@ -251,7 +282,8 @@ public class AgentToolCatalog {
 
     public record ToolCatalogFingerprint(
             String knowledgeToolDescription,
-            List<McpToolFingerprint> mcpTools) {
+            List<McpToolFingerprint> mcpTools,
+            long catalogRevision) {
 
         public ToolCatalogFingerprint {
             mcpTools = List.copyOf(mcpTools);
