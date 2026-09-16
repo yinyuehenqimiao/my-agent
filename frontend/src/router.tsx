@@ -13,7 +13,7 @@ import { IntentTreePage } from "@/pages/admin/intent-tree/IntentTreePage";
 import { IntentListPage } from "@/pages/admin/intent-tree/IntentListPage";
 import { IntentEditPage } from "@/pages/admin/intent-tree/IntentEditPage";
 import { WorkflowListPage } from "@/pages/admin/workflow/WorkflowListPage";
-import { WorkflowDesignerPage } from "@/pages/admin/workflow/WorkflowDesignerPage";
+import { BusinessWorkflowDesignerPage as WorkflowDesignerPage } from "@/pages/admin/workflow/BusinessWorkflowDesignerPage";
 import { ToolCenterPage, AuditPage, RouteSimulationPage } from "@/pages/admin/workflow/WorkflowAdminPages";
 import { AgentProfilePage } from "@/pages/admin/agents/AgentProfilePage";
 import { AgentPromptPage } from "@/pages/admin/agents/AgentPromptPage";

@@ -147,7 +147,7 @@ public class WorkflowAdminController {
             throw new ClientException("工作流不存在：" + defKey);
         }
         List<Map<String, Object>> versions = jdbc.queryForList(
-                "SELECT id,version_number,status,created_by,created_time,published_time,published_by,bpmn_xml FROM wf_version WHERE definition_id=? ORDER BY version_number",
+                "SELECT id,version_number,status,created_by,created_time,published_time,published_by,bpmn_xml,process_json,content_hash,lock_version,source_type FROM wf_version WHERE definition_id=? ORDER BY version_number",
                 def.get("id"));
         List<Map<String, Object>> versionViews = versions.stream().map(this::toVersion).toList();
         enrichActorNames(versionViews, "createdBy", "createdByName");
@@ -275,6 +275,10 @@ public class WorkflowAdminController {
         m.put("publishedTime", row.get("published_time"));
         m.put("publishedBy", row.get("published_by"));
         m.put("bpmnXml", row.get("bpmn_xml"));
+        m.put("processJson", row.get("process_json"));
+        m.put("contentHash", row.get("content_hash"));
+        m.put("lockVersion", row.get("lock_version"));
+        m.put("sourceType", row.get("source_type"));
         return m;
     }
 

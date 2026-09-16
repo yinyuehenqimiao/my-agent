@@ -33,6 +33,10 @@ export interface WfVersion {
   publishedBy?: string | null;
   publishedByName?: string | null;
   bpmnXml?: string | null;
+  processJson?: string | null;
+  contentHash?: string | null;
+  lockVersion?: number;
+  sourceType?: "PROCESS_JSON" | "LEGACY_BPMN";
 }
 
 export interface WfDefinitionDetail {
@@ -58,8 +62,11 @@ export interface ReviewPayload {
 }
 
 export interface WorkflowProcess {
-  nodes: Array<{ id: string; type: string; version?: number; config?: Record<string, unknown> }>;
+  schemaVersion: number;
+  nodes: Array<{ id: string; type: string; version?: number; position?: { x: number; y: number }; config?: Record<string, unknown> }>;
   edges: Array<{ id: string; source: string; target: string; outlet?: string; condition?: { field: string; operator: string; value: string } }>;
+  variables: Array<{ name: string; type: string; source?: string; sensitivity?: string }>;
+  dependencies: Array<{ kind: string; connectorId?: string; resourceId: string; contractVersion?: string; contentHash?: string }>;
 }
 
 export interface AuditEntry {
@@ -138,6 +145,15 @@ export const workflowService = {
 
   compile: (defKey: string, process: WorkflowProcess) =>
     api.post<{ bpmnXml: string; contentHash: string }>("/api/workflow/compile", { defKey, process }),
+
+  createProcessDefinition: (payload: { defKey: string; name: string; description?: string; process: WorkflowProcess }) =>
+    api.post<{ versionId: number; lockVersion: number; contentHash: string }>("/api/workflow/process-definitions", payload),
+
+  saveProcessVersion: (versionId: number, lockVersion: number, process: WorkflowProcess) =>
+    api.put<{ versionId: number; lockVersion: number; contentHash: string }>(`/api/workflow/process-versions/${versionId}`, { lockVersion, process }),
+
+  validateProcess: (defKey: string, process: WorkflowProcess) =>
+    api.post<{ bpmnXml: string; contentHash: string }>("/api/workflow/processes/validate", { defKey, process }),
 
   submitReview: (versionId: number) =>
     api.post<void>(`/api/workflow/versions/${versionId}/submit-review`),
