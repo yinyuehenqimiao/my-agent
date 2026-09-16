@@ -143,6 +143,9 @@ ai:
         priority: 100
 
 rag:
+  mcp:
+    # 旧启动期静态注册会绕过连接器审核与发布链路；仅迁移兼容时显式开启。
+    legacy-bootstrap-enabled: ${RAG_MCP_LEGACY_BOOTSTRAP_ENABLED:false}
   storage:
     type: s3
     kb-bucket: myagent-sources
