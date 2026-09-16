@@ -8,7 +8,7 @@ import com.myagent.system.auth.service.PolicyDecisionService;
 import com.myagent.workflow.dao.entity.WfVersionDO;
 import com.myagent.workflow.service.AuditQueryService;
 import com.myagent.workflow.service.WorkflowVersionService;
-import lombok.RequiredArgsConstructor;
+import com.myagent.workflow.service.WorkflowNodeCatalog;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
@@ -30,7 +30,6 @@ import java.util.stream.Collectors;
  * 响应字段统一 camelCase，避免前端读不到 defKey 等字段。
  */
 @RestController
-@RequiredArgsConstructor
 @RequestMapping("/api/workflow")
 public class WorkflowAdminController {
 
@@ -38,8 +37,31 @@ public class WorkflowAdminController {
     private final PolicyDecisionService policy;
     private final JdbcTemplate jdbc;
     private final AuditQueryService auditQueryService;
+    private final WorkflowNodeCatalog nodeCatalog;
+
+    public WorkflowAdminController(WorkflowVersionService versionService, PolicyDecisionService policy,
+                                   JdbcTemplate jdbc, AuditQueryService auditQueryService) {
+        this(versionService, policy, jdbc, auditQueryService, new WorkflowNodeCatalog());
+    }
+
+    public WorkflowAdminController(WorkflowVersionService versionService, PolicyDecisionService policy,
+                                   JdbcTemplate jdbc, AuditQueryService auditQueryService,
+                                   WorkflowNodeCatalog nodeCatalog) {
+        this.versionService = versionService;
+        this.policy = policy;
+        this.jdbc = jdbc;
+        this.auditQueryService = auditQueryService;
+        this.nodeCatalog = nodeCatalog;
+    }
 
     // ===== 定义/版本 =====
+
+    /** 返回可视化编排器允许使用的安全节点目录。 */
+    @GetMapping("/node-catalog")
+    public Result<List<WorkflowNodeCatalog.NodeDefinition>> nodeCatalog() {
+        policy.requirePermission(UserContext.requireIdentity(), "workflow:view");
+        return Results.success(nodeCatalog.list());
+    }
 
     /** 创建工作流定义并生成首个草稿版本 */
     @PostMapping("/definitions")
