@@ -42,6 +42,19 @@ public class WorkflowConfirmationService {
         jdbc.update("UPDATE workflow_action SET status='INVALIDATED',lock_version=lock_version+1 WHERE instance_id=? AND node_instance_id=? AND status IN ('PENDING','CONFIRMED')", instanceId, nodeId);
     }
 
+    public Confirmation consumeConfirmed(ExecutionIdentity identity, String actionId, long lockVersion, Map<String,Object> parameters) {
+        String hash = hash(json(parameters));
+        int changed = jdbc.update("UPDATE workflow_action SET status='EXECUTING',lock_version=lock_version+1 WHERE id=? AND tenant_id=? AND user_id=? AND status='CONFIRMED' AND expires_at>CURRENT_TIMESTAMP AND parameter_hash=? AND lock_version=?",
+                actionId, identity.getTenantId(), identity.getUserId(), hash, lockVersion);
+        if (changed != 1) throw new ClientException("写操作缺少有效确认或参数已改变");
+        return get(identity, actionId);
+    }
+
+    public void finish(String actionId, String status, Object result) {
+        jdbc.update("UPDATE workflow_action SET status=?,result=?,lock_version=lock_version+1 WHERE id=? AND status='EXECUTING'",
+                status, json(result), actionId);
+    }
+
     public Confirmation get(ExecutionIdentity identity, String id) {
         return jdbc.query("SELECT id,instance_id,node_instance_id,tool_id,tool_version,parameter_hash,status,lock_version FROM workflow_action WHERE id=? AND tenant_id=? AND user_id=?",
                 (rs,n) -> new Confirmation(rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getString(5),rs.getString(6),rs.getString(7),rs.getLong(8)), id, identity.getTenantId(), identity.getUserId()).stream().findFirst().orElseThrow(() -> new ClientException("确认记录不存在或无权访问"));
