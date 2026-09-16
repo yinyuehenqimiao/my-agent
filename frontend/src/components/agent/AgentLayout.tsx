@@ -46,6 +46,7 @@ function AgentHeader({ meta, rawOpen, onToggleRaw }: AgentHeaderProps) {
   return (
     <header className="agent-header">
       <div className="agent-brand">
+        <span className="agent-brand-mark" aria-hidden="true" />
         <span className="agent-wordmark">MY-AGENT</span>
         <span className="agent-brand-sep">/</span>
         <span className="agent-brand-tag">智能体</span>

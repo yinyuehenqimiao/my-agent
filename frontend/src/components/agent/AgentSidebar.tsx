@@ -426,7 +426,7 @@ export function AgentSidebar() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             {/* 弹窗走 portal 落在 .agent-app 外 焦点圈会吃 RAG 的紫 显式压成橙（token 也够不着 只能写字面值） */}
-            <AlertDialogCancel className="focus-visible:ring-[#d97757]">取消</AlertDialogCancel>
+            <AlertDialogCancel className="focus-visible:ring-[#0e7490]">取消</AlertDialogCancel>
             {/* 确认钮吃 shadcn 默认 primary 会是 RAG 的紫 这里按删除语义显式压成红 */}
             <AlertDialogAction
               onClick={runDelete}

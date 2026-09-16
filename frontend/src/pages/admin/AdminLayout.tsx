@@ -179,12 +179,24 @@ export function AdminLayout() {
 
   const roleLabel = user?.role === "admin" ? "管理员" : "成员";
 
+  /** 子菜单高亮：避免父路径（如 /admin/workflow）把兄弟路由也当成自己激活 */
+  const isMenuChildActive = (pathname: string, childPath: string, siblings: MenuChild[]) => {
+    if (pathname === childPath) return true;
+    if (!pathname.startsWith(`${childPath}/`)) return false;
+    return !siblings.some(
+      (sibling) =>
+        sibling.path !== childPath &&
+        (pathname === sibling.path || pathname.startsWith(`${sibling.path}/`))
+    );
+  };
+
   const renderNavItem = (item: MenuItem) => {
     const Icon = item.icon;
 
     if (item.children && item.children.length > 0) {
       const groupOpen = item.id ? openGroups[item.id] : false;
-      const groupActive = item.id === "intent" && isIntentActive;
+      const groupActive =
+        (item.id === "intent" && isIntentActive) || (item.id === "workflow" && isWorkflowActive);
 
       return (
         <div key={item.id || item.path} className="space-y-1">
@@ -228,9 +240,7 @@ export function AdminLayout() {
             <div className="ml-4 space-y-1 border-l border-slate-200 pl-2">
               {item.children.map((child) => {
                 const ChildIcon = child.icon;
-                const childActive =
-                  location.pathname === child.path ||
-                  location.pathname.startsWith(`${child.path}/`);
+                const childActive = isMenuChildActive(location.pathname, child.path, item.children!);
                 return (
                   <Link
                     key={child.path}
