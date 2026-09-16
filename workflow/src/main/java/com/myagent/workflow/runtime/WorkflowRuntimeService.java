@@ -58,6 +58,22 @@ public class WorkflowRuntimeService {
         return instance.getId();
     }
 
+    /**
+     * 启动当前已发布版本。调用方只需要提供业务定义键，不需要感知版本号，
+     * 版本切换由发布门禁统一控制。
+     */
+    public String startCurrentPublishedInstance(String defKey, String initiatorId,
+                                                 String businessKey, String traceId,
+                                                 Map<String, Object> variables) {
+        Long versionId = jdbc.queryForObject(
+                "SELECT current_published_version_id FROM wf_definition WHERE def_key=?",
+                Long.class, defKey);
+        if (versionId == null) {
+            throw new ClientException("工作流没有已发布版本：" + defKey);
+        }
+        return startInstance(defKey, versionId, initiatorId, businessKey, traceId, variables);
+    }
+
     /** 确保已发布版本已部署到 Flowable（幂等） */
     private void ensureDeployed(String defKey, Long defId, Long versionId, String bpmnXml) {
         String procDefKey = processDefinitionKey(defId, versionId);
