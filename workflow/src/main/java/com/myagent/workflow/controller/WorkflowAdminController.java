@@ -9,6 +9,8 @@ import com.myagent.workflow.dao.entity.WfVersionDO;
 import com.myagent.workflow.service.AuditQueryService;
 import com.myagent.workflow.service.WorkflowVersionService;
 import com.myagent.workflow.service.WorkflowNodeCatalog;
+import com.myagent.workflow.service.WorkflowProcessCompiler;
+import com.myagent.workflow.model.WorkflowProcess;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
@@ -38,6 +40,7 @@ public class WorkflowAdminController {
     private final JdbcTemplate jdbc;
     private final AuditQueryService auditQueryService;
     private final WorkflowNodeCatalog nodeCatalog;
+    private final WorkflowProcessCompiler processCompiler;
 
     public WorkflowAdminController(WorkflowVersionService versionService, PolicyDecisionService policy,
                                    JdbcTemplate jdbc, AuditQueryService auditQueryService) {
@@ -52,6 +55,7 @@ public class WorkflowAdminController {
         this.jdbc = jdbc;
         this.auditQueryService = auditQueryService;
         this.nodeCatalog = nodeCatalog;
+        this.processCompiler = new WorkflowProcessCompiler();
     }
 
     // ===== 定义/版本 =====
@@ -61,6 +65,13 @@ public class WorkflowAdminController {
     public Result<List<WorkflowNodeCatalog.NodeDefinition>> nodeCatalog() {
         policy.requirePermission(UserContext.requireIdentity(), "workflow:view");
         return Results.success(nodeCatalog.list());
+    }
+
+    /** 在保存或提交审核前，由服务端校验并编译画布流程。 */
+    @PostMapping("/compile")
+    public Result<WorkflowProcessCompiler.CompiledProcess> compile(@RequestBody CompileRequest req) {
+        policy.requirePermission(UserContext.requireIdentity(), "workflow:edit");
+        return Results.success(processCompiler.compile(req.defKey(), req.process()));
     }
 
     /** 创建工作流定义并生成首个草稿版本 */
@@ -274,5 +285,8 @@ public class WorkflowAdminController {
     }
 
     public record ReviewRequest(Boolean approve, String comment) {
+    }
+
+    public record CompileRequest(String defKey, WorkflowProcess process) {
     }
 }

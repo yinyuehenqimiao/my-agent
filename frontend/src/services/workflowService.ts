@@ -57,6 +57,11 @@ export interface ReviewPayload {
   comment?: string;
 }
 
+export interface WorkflowProcess {
+  nodes: Array<{ id: string; type: string; version?: number; config?: Record<string, unknown> }>;
+  edges: Array<{ id: string; source: string; target: string; outlet?: string; condition?: { field: string; operator: string; value: string } }>;
+}
+
 export interface AuditEntry {
   id: string;
   category: AuditCategory;
@@ -130,6 +135,9 @@ export const workflowService = {
 
   newVersion: (payload: NewVersionPayload) =>
     api.post<number>("/api/workflow/versions", payload),
+
+  compile: (defKey: string, process: WorkflowProcess) =>
+    api.post<{ bpmnXml: string; contentHash: string }>("/api/workflow/compile", { defKey, process }),
 
   submitReview: (versionId: number) =>
     api.post<void>(`/api/workflow/versions/${versionId}/submit-review`),
