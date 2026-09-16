@@ -50,8 +50,6 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AgentToolCatalog {
 
-    private static final java.util.Set<String> SUPPORTED_WORKFLOWS = java.util.Set.of("leave-approval");
-
     private final KnowledgeSearchFacade knowledgeSearchFacade;
     private final AgentConversationService conversationService;
     private final IntentNodeRegistry intentNodeRegistry;
@@ -65,6 +63,8 @@ public class AgentToolCatalog {
     private com.myagent.enterprise.service.KnowledgeAccessService enterpriseAccess;
     @org.springframework.beans.factory.annotation.Autowired
     private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.myagent.framework.workflow.PublishedWorkflowCatalog publishedWorkflowCatalog;
 
     /**
      * 把注册表与提示词解析一次并定格：同一次请求的指纹与 Toolkit 都从这份快照派生
@@ -114,7 +114,9 @@ public class AgentToolCatalog {
 
     /** 当前已完成专用工具集接入、可以安全执行的固定流程。 */
     public boolean supportsWorkflow(String workflowDefKey) {
-        return SUPPORTED_WORKFLOWS.contains(workflowDefKey);
+        // leave-approval 是旧流程兼容入口；新流程必须存在已发布版本。
+        return "leave-approval".equals(workflowDefKey)
+                || (publishedWorkflowCatalog != null && publishedWorkflowCatalog.isPublished(workflowDefKey));
     }
 
     /**
