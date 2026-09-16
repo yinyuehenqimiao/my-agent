@@ -21,6 +21,10 @@ vi.mock("bpmn-js/lib/Modeler", () => ({
   },
 }));
 
+vi.mock("bpmn-auto-layout", () => ({
+  layoutProcess: vi.fn(async (xml: string) => xml),
+}));
+
 vi.mock("@/services/workflowService", () => ({
   WF_STATUS_LABEL: {
     DRAFT: "草稿",

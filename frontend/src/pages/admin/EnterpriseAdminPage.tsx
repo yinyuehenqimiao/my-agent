@@ -1,42 +1,570 @@
-import { useEffect, useState } from "react";
-import { enterprise, label, type Employee, type Workday } from "@/services/enterpriseService";
-import { getKnowledgeBases, type KnowledgeBase } from "@/services/knowledgeService";
-import { api } from "@/services/api";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { Link2, PlugZap, RefreshCw, ShieldCheck, ShieldOff } from "lucide-react";
+
+import {
+  mcpConnectorService,
+  mcpIntentBindingService,
+  type McpCatalogTool,
+  type McpConnector,
+  type McpConnectorInput,
+  type McpIntentBinding
+} from "@/services/mcpConnectorService";
+import { getIntentTree, type IntentNodeTree } from "@/services/intentTreeService";
 import "@/styles/enterprise.css";
 
-const SELECTED_EMPLOYEE_KEY = "myagent.enterprise.admin.employee";
-const SELECTED_KNOWLEDGE_BASE_KEY = "myagent.enterprise.admin.knowledge-base";
+const emptyForm: McpConnectorInput = {
+  connectorId: "erp",
+  displayName: "企业 ERP",
+  endpoint: "http://127.0.0.1:18081/mcp",
+  secretRef: "vault:erp"
+};
+
+type IntentOption = { intentCode: string; name: string; kind?: number | null };
+
+function statusLabel(status: string) {
+  if (status === "DISCOVERED") return "已发现工具";
+  if (status === "DRAFT") return "草稿";
+  if (status === "PUBLISHED") return "已发布";
+  return status || "未知";
+}
+
+function reviewLabel(status: string) {
+  if (status === "APPROVED") return "已批准";
+  if (status === "DISABLED") return "已停用";
+  if (status === "PENDING_REVIEW") return "待审核";
+  return status || "未知";
+}
+
+function tokenEnvHint(secretRef: string) {
+  const normalized = secretRef
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "_");
+  return `MCP_DISCOVERY_TOKEN_${normalized || "…"}`;
+}
+
+function flattenIntents(nodes: IntentNodeTree[], out: IntentOption[] = []): IntentOption[] {
+  for (const node of nodes) {
+    out.push({ intentCode: node.intentCode, name: node.name, kind: node.kind });
+    if (node.children?.length) flattenIntents(node.children, out);
+  }
+  return out;
+}
 
 export function EnterpriseAdminPage() {
-  const [employees,setEmployees]=useState<Employee[]>([]);const [editing,setEditing]=useState<Employee>();
-  const [users,setUsers]=useState<{id:string;username:string;nickname:string}[]>([]);
-  const [kbs,setKbs]=useState<KnowledgeBase[]>([]);const [kb,setKb]=useState("");
-  const [grants,setGrants]=useState<{audience:string;subject:string}[]>([]);
-  const [audience,setAudience]=useState("ALL");const [subject,setSubject]=useState("");
-  const [message,setMessage]=useState("");const [error,setError]=useState("");const [busy,setBusy]=useState(false);
-  const [day,setDay]=useState("");const [working,setWorking]=useState(false);
-  const [calendar,setCalendar]=useState<Workday[]>([]);
-  const [erpStatus,setErpStatus]=useState<{mode:string;configured:boolean;summary:string;nextStep:string}>();
-  async function loadCalendar(){setCalendar(await enterprise.get<Workday[]>("/admin/calendar"));}
-  useEffect(()=>{ Promise.all([enterprise.get<Employee[]>("/admin/employees"),getKnowledgeBases(),api.get<never,{records:typeof users}>("/api/users?current=1&size=200"),loadCalendar(),enterprise.get<{mode:string;configured:boolean;summary:string;nextStep:string}>("/admin/erp/status")]).then(async([e,k,u,,status])=>{setEmployees(e);setKbs(k);setUsers(u.records);setErpStatus(status);const employeeId=window.localStorage.getItem(SELECTED_EMPLOYEE_KEY);const selectedEmployee=e.find(item=>item.userId===employeeId)||e[0];if(selectedEmployee){setEditing(selectedEmployee);window.localStorage.setItem(SELECTED_EMPLOYEE_KEY,selectedEmployee.userId);}const knowledgeBaseId=window.localStorage.getItem(SELECTED_KNOWLEDGE_BASE_KEY);if(knowledgeBaseId&&k.some(item=>item.id===knowledgeBaseId)){setKb(knowledgeBaseId);setGrants(await enterprise.get(`/admin/knowledge/${knowledgeBaseId}/grants`));}}).catch(e=>setError(e.message)); },[]);
-  async function save(job:()=>Promise<unknown>) {setBusy(true);setError("");setMessage("");try{await job();setMessage("保存成功");const refreshed=await enterprise.get<Employee[]>("/admin/employees");setEmployees(refreshed);if(editing){setEditing(refreshed.find(item=>item.userId===editing.userId)||editing);}}catch(e){setError(e instanceof Error?e.message:"保存失败");}finally{setBusy(false);}}
-  async function selectKb(id:string){setKb(id);window.localStorage.setItem(SELECTED_KNOWLEDGE_BASE_KEY,id);setGrants([]);if(id)try{setGrants(await enterprise.get(`/admin/knowledge/${id}/grants`));}catch(e){setError(e instanceof Error?e.message:"读取失败");}}
-  function selectEmployee(id:string){window.localStorage.setItem(SELECTED_EMPLOYEE_KEY,id);const user=users.find(item=>String(item.id)===id);setEditing(employees.find(item=>item.userId===id)||(user?{userId:String(user.id),displayName:user.nickname||user.username,department:"",businessRole:"EMPLOYEE",active:true}:undefined));}
-  return <div className="p-6 space-y-6"><h1 className="text-2xl font-semibold">企业配置</h1><p className="text-slate-500">配置员工审批关系、制度可见范围与工作日历。</p>
-    {error&&<p role="alert" className="text-red-600">{error}</p>}{message&&<p role="status" className="text-emerald-600">{message}</p>}
-    {erpStatus&&<section className="enterprise-card"><h2 className="text-lg font-semibold">ERP 连接状态</h2><div className="mt-3 flex flex-wrap items-center gap-3"><span className={erpStatus.configured?"rounded bg-emerald-100 px-2 py-1 text-sm text-emerald-700":"rounded bg-amber-100 px-2 py-1 text-sm text-amber-700"}>{erpStatus.configured?"配置已就绪":"需要部署配置"}</span><span className="font-medium">{erpStatus.mode}</span></div><p className="mt-3 text-sm text-slate-600">{erpStatus.summary}</p><p className="mt-1 text-sm text-slate-500">下一步：{erpStatus.nextStep}</p></section>}
-    <section className="enterprise-card"><h2 className="text-lg font-semibold">员工与审批关系</h2>
-      <label className="mt-4 block">选择账号<select className="enterprise-input" value={editing?.userId||""} onChange={e=>selectEmployee(e.target.value)}><option value="">选择需要配置的账号</option>{users.map(u=><option key={u.id} value={u.id}>{u.nickname||u.username} ({u.username})</option>)}</select></label>
-      {editing&&<form className="mt-4 grid gap-4 md:grid-cols-2" onSubmit={e=>{e.preventDefault();void save(()=>enterprise.put(`/admin/employees/${editing.userId}`,editing));}}>
-        <label>姓名<input required className="enterprise-input" maxLength={100} value={editing.displayName} onChange={e=>setEditing({...editing,displayName:e.target.value})}/></label><label>部门<input required maxLength={100} className="enterprise-input" value={editing.department} onChange={e=>setEditing({...editing,department:e.target.value})}/></label>
-        <label>企业角色<select className="enterprise-input" value={editing.businessRole} onChange={e=>setEditing({...editing,businessRole:e.target.value})}>{["EMPLOYEE","MANAGER","HR"].map(v=><option key={v} value={v}>{label(v)}</option>)}</select></label>
-        <label>直属主管<select className="enterprise-input" value={editing.managerId||""} onChange={e=>setEditing({...editing,managerId:e.target.value||undefined})}><option value="">未配置</option>{employees.filter(x=>x.businessRole==="MANAGER"&&x.userId!==editing.userId).map(x=><option key={x.userId} value={x.userId}>{x.displayName}</option>)}</select></label>
-        <label>人事审批人<select className="enterprise-input" value={editing.hrId||""} onChange={e=>setEditing({...editing,hrId:e.target.value||undefined})}><option value="">未配置</option>{employees.filter(x=>x.businessRole==="HR"&&x.userId!==editing.userId).map(x=><option key={x.userId} value={x.userId}>{x.displayName}</option>)}</select></label><label className="flex items-center gap-2"><input type="checkbox" checked={editing.active} onChange={e=>setEditing({...editing,active:e.target.checked})}/>启用员工</label><button disabled={busy} className="enterprise-primary justify-self-start">保存关系</button>
-      </form>}
-    </section>
-    <section className="enterprise-card"><h2 className="text-lg font-semibold">知识库可见范围</h2><p className="mt-2 text-sm text-slate-500">未添加授权的知识库仅管理员可读。</p><label className="mt-3 block">知识库<select className="enterprise-input" value={kb} onChange={e=>selectKb(e.target.value)}><option value="">选择知识库</option>{kbs.map(k=><option key={k.id} value={k.id}>{k.name}</option>)}</select></label>
-      {kb&&<div className="mt-4 space-y-3">{grants.map((g,i)=><div key={`${g.audience}:${g.subject}`} className="flex justify-between"><span>{g.audience==="ALL"?"全体员工":g.audience==="DEPARTMENT"?`部门：${g.subject}`:`角色：${label(g.subject)}`}</span><button onClick={()=>setGrants(grants.filter((_,j)=>j!==i))}>移除</button></div>)}<div className="flex flex-wrap gap-3"><select aria-label="授权类型" className="enterprise-input !w-auto" value={audience} onChange={e=>setAudience(e.target.value)}><option value="ALL">全员</option><option value="DEPARTMENT">部门</option><option value="ROLE">企业角色</option></select>{audience==="DEPARTMENT"&&<input aria-label="部门名称" placeholder="部门名称" className="enterprise-input !w-auto" value={subject} onChange={e=>setSubject(e.target.value)}/>} {audience==="ROLE"&&<select aria-label="角色" className="enterprise-input !w-auto" value={subject} onChange={e=>setSubject(e.target.value)}><option value="">选择角色</option>{["EMPLOYEE","MANAGER","HR"].map(v=><option key={v} value={v}>{label(v)}</option>)}</select>}<button className="enterprise-secondary" onClick={()=>{const s=audience==="ALL"?"*":subject.trim();if(s&&!grants.some(g=>g.audience===audience&&g.subject===s))setGrants([...grants,{audience,subject:s}]);}}>添加</button></div><button disabled={busy} className="enterprise-primary" onClick={()=>save(()=>enterprise.put(`/admin/knowledge/${kb}/grants`,grants))}>保存授权</button></div>}
-    </section>
-    <section className="enterprise-card"><h2 className="text-lg font-semibold">节假日与调休</h2><p className="mt-2 text-sm text-slate-500">未配置的日期按周一至周五工作；变更后旧确认卡会重新校验。</p><div className="mt-3 flex flex-wrap gap-4"><input aria-label="日历日期" type="date" className="enterprise-input !w-auto" value={day} onChange={e=>setDay(e.target.value)}/><label className="flex items-center gap-2"><input type="checkbox" checked={working} onChange={e=>setWorking(e.target.checked)}/>工作日</label><button disabled={busy||!day} className="enterprise-primary" onClick={()=>save(async()=>{await enterprise.put(`/admin/calendar/${day}?working=${working}`);await loadCalendar();})}>保存日历</button></div>{calendar.length>0?<div className="mt-4 overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left text-slate-500"><th className="p-2">日期</th><th className="p-2">状态</th><th className="p-2">说明</th><th className="p-2">操作</th></tr></thead><tbody>{calendar.map(item=><tr key={item.day} className="border-b"><td className="p-2">{item.day}</td><td className="p-2">{item.working?"工作日（调休）":"休息日（节假日）"}</td><td className="p-2">{item.description||"管理员配置"}</td><td className="p-2"><button disabled={busy} className="enterprise-secondary" onClick={()=>save(async()=>{await enterprise.delete(`/admin/calendar/${item.day}`);await loadCalendar();})}>恢复默认</button></td></tr>)}</tbody></table></div>:<p className="mt-4 text-sm text-slate-500">暂无自定义日期，当前按周一至周五计算工作日。</p>}</section>
-  </div>;
+  const [connectors, setConnectors] = useState<McpConnector[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [tools, setTools] = useState<McpCatalogTool[]>([]);
+  const [bindings, setBindings] = useState<McpIntentBinding[]>([]);
+  const [intents, setIntents] = useState<IntentOption[]>([]);
+  const [form, setForm] = useState<McpConnectorInput>(emptyForm);
+  const [bindIntentCode, setBindIntentCode] = useState("");
+  const [bindToolId, setBindToolId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  const selected = useMemo(
+    () => connectors.find((item) => item.connectorId === selectedId) || null,
+    [connectors, selectedId]
+  );
+
+  const approvedTools = useMemo(
+    () => tools.filter((tool) => tool.reviewStatus === "APPROVED" && tool.enabled),
+    [tools]
+  );
+
+  const mcpIntents = useMemo(() => {
+    const mcp = intents.filter((item) => item.kind === 2);
+    return mcp.length > 0 ? mcp : intents;
+  }, [intents]);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        setError("");
+        const [list, tree, bindingRows] = await Promise.all([
+          mcpConnectorService.list(),
+          getIntentTree().catch(() => [] as IntentNodeTree[]),
+          mcpIntentBindingService.list().catch(() => [] as McpIntentBinding[])
+        ]);
+        if (!active) return;
+        setConnectors(list);
+        setSelectedId(list[0]?.connectorId || "");
+        setIntents(flattenIntents(Array.isArray(tree) ? tree : []));
+        setBindings(Array.isArray(bindingRows) ? bindingRows : []);
+      } catch (err) {
+        if (active) setError(err instanceof Error ? err.message : "加载 ERP 连接失败");
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setTools([]);
+      return;
+    }
+    let active = true;
+    void mcpConnectorService
+      .tools(selectedId)
+      .then((rows) => {
+        if (active) setTools(rows);
+      })
+      .catch((err) => {
+        if (active) setError(err instanceof Error ? err.message : "加载工具目录失败");
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!selected) return;
+    setForm((prev) => ({
+      connectorId: selected.connectorId,
+      displayName: selected.displayName,
+      endpoint: selected.endpoint,
+      secretRef: prev.secretRef || emptyForm.secretRef
+    }));
+  }, [selected]);
+
+  useEffect(() => {
+    if (!approvedTools.some((tool) => tool.toolId === bindToolId)) {
+      setBindToolId(approvedTools[0]?.toolId || "");
+    }
+  }, [approvedTools, bindToolId]);
+
+  async function refreshConnectors(preferId?: string) {
+    const list = await mcpConnectorService.list();
+    setConnectors(list);
+    const nextId =
+      (preferId && list.some((item) => item.connectorId === preferId) && preferId) ||
+      (selectedId && list.some((item) => item.connectorId === selectedId) && selectedId) ||
+      list[0]?.connectorId ||
+      "";
+    setSelectedId(nextId);
+  }
+
+  async function refreshTools(connectorId: string) {
+    if (!connectorId) {
+      setTools([]);
+      return;
+    }
+    setTools(await mcpConnectorService.tools(connectorId));
+  }
+
+  async function refreshBindings() {
+    setBindings(await mcpIntentBindingService.list());
+  }
+
+  async function run(job: () => Promise<void>, success: string) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await job();
+      setMessage(success);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "操作失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startCreate() {
+    setSelectedId("");
+    setTools([]);
+    setForm(emptyForm);
+    setMessage("");
+    setError("");
+  }
+
+  return (
+    <div className="p-6 space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold">ERP 连接</h1>
+        <p className="mt-1 text-slate-500">
+          完整链路：登记 MCP 连接 → 发现并审核工具 → 绑定到意图并发布。员工与审批关系仍在 ERP 内管理。
+        </p>
+      </div>
+
+      <section className="enterprise-card">
+        <ol className="grid gap-3 md:grid-cols-3 text-sm">
+          <li className="rounded-xl border border-cyan-200 bg-cyan-50/70 p-3">
+            <div className="font-semibold text-cyan-900">① 连接 ERP</div>
+            <p className="mt-1 text-cyan-800/80">登记 endpoint 与 secretRef，不保存真实令牌。</p>
+          </li>
+          <li className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="font-semibold text-slate-800">② 发现并审核工具</div>
+            <p className="mt-1 text-slate-600">从 ERP 拉目录；仅「批准启用」后可绑定。</p>
+          </li>
+          <li className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="font-semibold text-slate-800">③ 绑定意图并发布</div>
+            <p className="mt-1 text-slate-600">把工具挂到意图；发布后才进入运行装配。</p>
+          </li>
+        </ol>
+        <p className="mt-3 text-xs text-slate-500">
+          工作流中心里的「运行时工具目录」只是只读清单，不负责登记 ERP；路由模拟负责把意图接到 Workflow/ReAct，与本页 MCP 绑定互补。
+          {" "}
+          <Link className="text-cyan-700 underline" to="/admin/workflow/tools">
+            查看运行时工具目录
+          </Link>
+        </p>
+      </section>
+
+      {error ? <p role="alert" className="text-red-600">{error}</p> : null}
+      {message ? <p role="status" className="text-emerald-600">{message}</p> : null}
+
+      <section className="enterprise-card">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">① 已登记的 ERP 连接器</h2>
+            <p className="mt-1 text-sm text-slate-500">选择一条连接后，继续发现工具、审核与绑定。</p>
+          </div>
+          <button type="button" className="enterprise-secondary" onClick={startCreate}>
+            新建连接
+          </button>
+        </div>
+
+        {connectors.length === 0 ? (
+          <p className="mt-4 text-sm text-slate-500">还没有 ERP 连接，请先在下方填写并保存。</p>
+        ) : (
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {connectors.map((item) => {
+              const active = item.connectorId === selectedId;
+              return (
+                <button
+                  key={item.connectorId}
+                  type="button"
+                  onClick={() => setSelectedId(item.connectorId)}
+                  className={`rounded-xl border p-4 text-left transition ${
+                    active
+                      ? "border-cyan-500 bg-cyan-50 shadow-sm"
+                      : "border-slate-200 bg-white hover:border-slate-300"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <PlugZap className="h-4 w-4 text-cyan-700" />
+                    <span className="font-medium">{item.displayName}</span>
+                  </div>
+                  <p className="mt-2 truncate text-xs text-slate-500">{item.connectorId}</p>
+                  <p className="mt-1 truncate text-xs text-slate-500">{item.endpoint}</p>
+                  <span className="mt-3 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                    {statusLabel(item.status)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="enterprise-card">
+        <div className="flex items-center gap-2">
+          <Link2 className="h-5 w-5 text-slate-500" />
+          <h2 className="text-lg font-semibold">{selected ? "编辑 ERP 连接" : "登记 ERP 连接"}</h2>
+        </div>
+        <p className="mt-2 text-sm text-slate-500">
+          令牌不入库，仅保存 `secretRef`。发现工具时会读取环境变量{" "}
+          <code className="rounded bg-slate-100 px-1">{tokenEnvHint(form.secretRef)}</code>。
+        </p>
+
+        <form
+          className="mt-4 grid gap-4 md:grid-cols-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void run(async () => {
+              await mcpConnectorService.save(form);
+              await refreshConnectors(form.connectorId.trim());
+            }, "连接已保存");
+          }}
+        >
+          <label className="text-sm">
+            连接器 ID
+            <input
+              required
+              className="enterprise-input"
+              value={form.connectorId}
+              disabled={Boolean(selected)}
+              onChange={(event) => setForm({ ...form, connectorId: event.target.value.trim() })}
+              placeholder="例如 erp"
+            />
+          </label>
+          <label className="text-sm">
+            显示名称
+            <input
+              required
+              className="enterprise-input"
+              value={form.displayName}
+              onChange={(event) => setForm({ ...form, displayName: event.target.value })}
+              placeholder="企业 ERP"
+            />
+          </label>
+          <label className="text-sm md:col-span-2">
+            MCP Endpoint
+            <input
+              required
+              className="enterprise-input"
+              value={form.endpoint}
+              onChange={(event) => setForm({ ...form, endpoint: event.target.value.trim() })}
+              placeholder="http://127.0.0.1:18081/mcp"
+            />
+          </label>
+          <label className="text-sm md:col-span-2">
+            Secret Ref
+            <input
+              required
+              className="enterprise-input"
+              value={form.secretRef}
+              onChange={(event) => setForm({ ...form, secretRef: event.target.value.trim() })}
+              placeholder="vault:erp"
+            />
+          </label>
+          <div className="md:col-span-2 flex flex-wrap gap-3">
+            <button type="submit" className="enterprise-primary" disabled={busy}>
+              保存连接
+            </button>
+            {selected ? (
+              <button
+                type="button"
+                className="enterprise-secondary inline-flex items-center gap-2"
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    const next = await mcpConnectorService.discover(selected.connectorId);
+                    setTools(next);
+                    await refreshConnectors(selected.connectorId);
+                  }, "已从 ERP 发现工具目录")
+                }
+              >
+                <RefreshCw className="h-4 w-4" />
+                发现工具
+              </button>
+            ) : null}
+          </div>
+        </form>
+      </section>
+
+      <section className="enterprise-card">
+        <h2 className="text-lg font-semibold">② 工具目录与审核</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          发现后的工具默认待审核。只有「批准启用」后，才能在下一步绑定意图。
+        </p>
+
+        {!selectedId ? (
+          <p className="mt-4 text-sm text-slate-500">请先选择或保存一条 ERP 连接。</p>
+        ) : tools.length === 0 ? (
+          <p className="mt-4 text-sm text-slate-500">暂无工具，点击「发现工具」从 ERP MCP 拉取目录。</p>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-slate-500">
+                  <th className="p-2">工具</th>
+                  <th className="p-2">说明</th>
+                  <th className="p-2">状态</th>
+                  <th className="p-2">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tools.map((tool) => (
+                  <tr key={tool.toolId} className="border-b align-top">
+                    <td className="p-2">
+                      <div className="font-medium">{tool.title || tool.toolId}</div>
+                      <div className="text-xs text-slate-500">{tool.toolId}</div>
+                    </td>
+                    <td className="p-2 text-slate-600">{tool.description || "—"}</td>
+                    <td className="p-2">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs ${
+                          tool.reviewStatus === "APPROVED" && tool.enabled
+                            ? "bg-emerald-100 text-emerald-700"
+                            : tool.reviewStatus === "DISABLED"
+                              ? "bg-slate-100 text-slate-600"
+                              : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
+                        {reviewLabel(tool.reviewStatus)}
+                        {tool.reviewStatus === "APPROVED" ? (tool.enabled ? " · 启用" : " · 未启用") : ""}
+                      </span>
+                    </td>
+                    <td className="p-2">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="enterprise-primary inline-flex items-center gap-1"
+                          disabled={busy}
+                          onClick={() =>
+                            void run(async () => {
+                              await mcpConnectorService.review(selectedId, tool.toolId, "APPROVED", true);
+                              await refreshTools(selectedId);
+                            }, `已批准 ${tool.toolId}`)
+                          }
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                          批准启用
+                        </button>
+                        <button
+                          type="button"
+                          className="enterprise-secondary inline-flex items-center gap-1"
+                          disabled={busy}
+                          onClick={() =>
+                            void run(async () => {
+                              await mcpConnectorService.review(selectedId, tool.toolId, "DISABLED", false);
+                              await refreshTools(selectedId);
+                            }, `已停用 ${tool.toolId}`)
+                          }
+                        >
+                          <ShieldOff className="h-3.5 w-3.5" />
+                          停用
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="enterprise-card">
+        <h2 className="text-lg font-semibold">③ 意图绑定与发布</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          把已批准的 ERP 工具挂到意图节点。先保存为草稿，再显式发布后才会被运行时装载。
+          若还没有 MCP 类意图，请先到{" "}
+          <Link className="text-cyan-700 underline" to="/admin/intent-tree">
+            意图管理
+          </Link>{" "}
+          创建。
+        </p>
+
+        <form
+          className="mt-4 grid gap-4 md:grid-cols-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!selectedId) {
+              setError("请先选择 ERP 连接");
+              return;
+            }
+            void run(async () => {
+              await mcpIntentBindingService.bind({
+                intentCode: bindIntentCode,
+                connectorId: selectedId,
+                toolId: bindToolId
+              });
+              await refreshBindings();
+            }, `已绑定草稿：${bindIntentCode} → ${bindToolId}`);
+          }}
+        >
+          <label className="text-sm">
+            意图
+            <select
+              required
+              className="enterprise-input"
+              value={bindIntentCode}
+              onChange={(event) => setBindIntentCode(event.target.value)}
+            >
+              <option value="">选择意图</option>
+              {mcpIntents.map((item) => (
+                <option key={item.intentCode} value={item.intentCode}>
+                  {item.name} ({item.intentCode})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm">
+            已批准工具
+            <select
+              required
+              className="enterprise-input"
+              value={bindToolId}
+              onChange={(event) => setBindToolId(event.target.value)}
+              disabled={!selectedId || approvedTools.length === 0}
+            >
+              <option value="">
+                {!selectedId ? "先选择连接" : approvedTools.length === 0 ? "暂无已批准工具" : "选择工具"}
+              </option>
+              {approvedTools.map((tool) => (
+                <option key={tool.toolId} value={tool.toolId}>
+                  {tool.title || tool.toolId}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-end">
+            <button
+              type="submit"
+              className="enterprise-primary"
+              disabled={busy || !selectedId || !bindIntentCode || !bindToolId}
+            >
+              保存绑定（草稿）
+            </button>
+          </div>
+        </form>
+
+        {bindings.length === 0 ? (
+          <p className="mt-4 text-sm text-slate-500">还没有意图绑定。</p>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-slate-500">
+                  <th className="p-2">意图</th>
+                  <th className="p-2">连接器</th>
+                  <th className="p-2">工具</th>
+                  <th className="p-2">状态</th>
+                  <th className="p-2">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bindings.map((row) => (
+                  <tr key={`${row.intentCode}:${row.connectorId}:${row.toolId}`} className="border-b">
+                    <td className="p-2 font-mono text-xs">{row.intentCode}</td>
+                    <td className="p-2">{row.connectorId}</td>
+                    <td className="p-2 font-mono text-xs">{row.toolId}</td>
+                    <td className="p-2">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs ${
+                          row.status === "PUBLISHED"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
+                        {statusLabel(row.status)}
+                      </span>
+                    </td>
+                    <td className="p-2">
+                      {row.status !== "PUBLISHED" ? (
+                        <button
+                          type="button"
+                          className="enterprise-secondary"
+                          disabled={busy}
+                          onClick={() =>
+                            void run(async () => {
+                              await mcpIntentBindingService.publish(row.intentCode);
+                              await refreshBindings();
+                            }, `已发布绑定：${row.intentCode}`)
+                          }
+                        >
+                          发布
+                        </button>
+                      ) : (
+                        <span className="text-xs text-slate-400">已生效</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
 }

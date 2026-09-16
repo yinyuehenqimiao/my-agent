@@ -46,7 +46,7 @@ type MenuItem = {
 };
 
 const menuItems: MenuItem[] = [
-  { path: "/admin/enterprise", label: "企业配置", icon: ClipboardList },
+  { path: "/admin/enterprise", label: "ERP 连接", icon: ClipboardList },
   {
     path: "/chat",
     label: "智能体对话",
@@ -79,7 +79,7 @@ const menuItems: MenuItem[] = [
     icon: Workflow,
     children: [
       { path: "/admin/workflow", label: "工作流列表", icon: GitBranch },
-      { path: "/admin/workflow/tools", label: "工具与连接器", icon: Wrench },
+      { path: "/admin/workflow/tools", label: "运行时工具目录", icon: Wrench },
       { path: "/admin/workflow/simulate", label: "路由模拟", icon: ClipboardList },
       { path: "/admin/workflow/audit", label: "审计查询", icon: Shield },
       { path: "/admin/workflow/traces", label: "推理链路", icon: Activity }
@@ -88,13 +88,13 @@ const menuItems: MenuItem[] = [
 ];
 
 const breadcrumbMap: Record<string, string> = {
-  enterprise: "企业配置",
+  enterprise: "ERP 连接",
   knowledge: "知识库",
   agents: "智能体管理",
   "intent-tree": "意图树配置",
   "intent-list": "意图列表",
   workflow: "工作流中心",
-  "workflow/tools": "工具与连接器",
+  "workflow/tools": "运行时工具目录",
   "workflow/simulate": "路由模拟",
   "workflow/audit": "审计查询",
   "workflow/traces": "推理链路"

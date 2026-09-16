@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import BpmnModeler from "bpmn-js/lib/Modeler";
+import { layoutProcess } from "bpmn-auto-layout";
 import "bpmn-js/dist/assets/diagram-js.css";
 import "bpmn-js/dist/assets/bpmn-font/css/bpmn.css";
 import { toast } from "sonner";
@@ -57,6 +58,8 @@ export function WorkflowDesignerPage() {
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
   const modelerRef = useRef<BpmnModeler | null>(null);
+  const importSeqRef = useRef(0);
+  const [modelerReady, setModelerReady] = useState(false);
   const [detail, setDetail] = useState<WfDefinitionDetail | null>(null);
   const [name, setName] = useState("");
   const [defKeyInput, setDefKeyInput] = useState("");
@@ -66,17 +69,55 @@ export function WorkflowDesignerPage() {
 
   useEffect(() => {
     if (!containerRef.current) return;
+    let alive = true;
     const modeler = new BpmnModeler({ container: containerRef.current });
     modelerRef.current = modeler;
-    modeler.importXML(EMPTY_DIAGRAM).then(() => modeler.get("canvas").zoom("fit-viewport"));
-    return () => { modeler.destroy(); modelerRef.current = null; };
-  }, []);
+    setModelerReady(false);
+
+    const boot = async () => {
+      // 新建页先灌空白图；编辑页等详情 XML，避免与 EMPTY 并发 importXML（bpmn-js 会炸 root-0）
+      if (!defKey) {
+        const seq = ++importSeqRef.current;
+        await modeler.importXML(EMPTY_DIAGRAM);
+        if (!alive || seq !== importSeqRef.current || modelerRef.current !== modeler) return;
+        modeler.get("canvas").zoom("fit-viewport");
+      }
+      if (alive && modelerRef.current === modeler) {
+        setModelerReady(true);
+      }
+    };
+    void boot().catch(() => {
+      if (alive) toast.error("工作流设计器初始化失败");
+    });
+
+    return () => {
+      alive = false;
+      importSeqRef.current += 1;
+      setModelerReady(false);
+      modeler.destroy();
+      if (modelerRef.current === modeler) {
+        modelerRef.current = null;
+      }
+    };
+  }, [defKey]);
 
   const showVersion = useCallback(async (version?: WfVersion) => {
-    const xmlToLoad = version?.bpmnXml || EMPTY_DIAGRAM;
-    if (!modelerRef.current) return;
-    await modelerRef.current.importXML(xmlToLoad);
-    modelerRef.current.get("canvas").zoom("fit-viewport");
+    const modeler = modelerRef.current;
+    if (!modeler) return;
+    let xmlToLoad = version?.bpmnXml || EMPTY_DIAGRAM;
+    // 运行时编排出的 BPMN 常无 DI；bpmn-js 会导入成功但画布空白，需先自动布局
+    if (xmlToLoad && !/BPMNDiagram/i.test(xmlToLoad)) {
+      xmlToLoad = await layoutProcess(xmlToLoad);
+    }
+    const seq = ++importSeqRef.current;
+    try {
+      await modeler.importXML(xmlToLoad);
+      if (seq !== importSeqRef.current || modelerRef.current !== modeler) return;
+      modeler.get("canvas").zoom("fit-viewport");
+    } catch (e) {
+      if (seq !== importSeqRef.current || modelerRef.current !== modeler) return;
+      throw e;
+    }
   }, []);
 
   const loadDefinition = useCallback(async () => {
@@ -95,8 +136,9 @@ export function WorkflowDesignerPage() {
   }, [defKey, showVersion]);
 
   useEffect(() => {
+    if (!modelerReady || !defKey) return;
     void loadDefinition();
-  }, [loadDefinition]);
+  }, [modelerReady, defKey, loadDefinition]);
 
   const selectedVersion = useMemo(
     () => detail?.versions.find((version) => version.id === selectedVersionId),

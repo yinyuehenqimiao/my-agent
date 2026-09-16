@@ -80,8 +80,11 @@ export function ToolCenterPage() {
       <section className="wf-tech-hero">
         <div className="wf-tech-hero-copy">
           <div className="wf-tech-chip"><Wrench className="h-3.5 w-3.5" /> Tool Fabric</div>
-          <h2 className="wf-tech-title">工具与连接器</h2>
-          <p className="wf-tech-subtitle">系统当前注册的真实工具目录。调用仍会经过身份、权限、参数、超时、脱敏和审计检查。</p>
+          <h2 className="wf-tech-title">运行时工具目录</h2>
+          <p className="wf-tech-subtitle">
+            只读查看当前 Agent 已装载的工具（含本地能力与已发布 MCP）。
+            ERP 连接登记、工具审核、意图绑定请到「ERP 连接」完成，不在本页配置。
+          </p>
         </div>
       </section>
 
@@ -97,7 +100,9 @@ export function ToolCenterPage() {
         </div>
         {loading && <div className="p-8 text-center text-sm text-slate-400">正在读取工具目录…</div>}
         {!loading && tools.length === 0 && (
-          <div className="p-8 text-center text-sm text-slate-500">当前没有已注册工具，请先启用企业能力或连接器。</div>
+          <div className="p-8 text-center text-sm text-slate-500">
+            当前没有已装载工具。若要接入 ERP，请先到「ERP 连接」完成发现、审核与意图发布。
+          </div>
         )}
         <div className="grid gap-3 xl:grid-cols-2">
           {tools.map((tool) => (

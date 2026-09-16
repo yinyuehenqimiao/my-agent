@@ -144,10 +144,6 @@ export const router = createBrowserRouter([
         element: <WorkflowDesignerPage />
       },
       {
-        path: "workflow/:defKey",
-        element: <WorkflowDesignerPage />
-      },
-      {
         path: "workflow/tools",
         element: <ToolCenterPage />
       },
@@ -162,6 +158,10 @@ export const router = createBrowserRouter([
       {
         path: "workflow/traces",
         element: <TraceAuditPage />
+      },
+      {
+        path: "workflow/:defKey",
+        element: <WorkflowDesignerPage />
       }
     ]
   },
