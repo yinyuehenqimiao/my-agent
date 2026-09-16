@@ -10,21 +10,21 @@ spring:
       max-request-size: 100MB
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://127.0.0.1:5432/myagent?client_encoding=UTF8
-    username: postgres
-    password: postgres
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5432/myagent?client_encoding=UTF8}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:YOUR_POSTGRES_PASSWORD}
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2
       pool-name: MyAgentHikariPool
   data:
     redis:
-      host: 127.0.0.1
-      port: 6379
-      password: 123456
+      host: ${SPRING_DATA_REDIS_HOST:127.0.0.1}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      password: ${SPRING_DATA_REDIS_PASSWORD:YOUR_REDIS_PASSWORD}
 
 rocketmq:
-  name-server: 127.0.0.1:9876
+  name-server: ${ROCKETMQ_NAME_SERVER:127.0.0.1:9876}
   producer:
     group: myagent-producer
     send-message-timeout: 3000
@@ -47,7 +47,7 @@ sa-token:
   # 使用无状态 JWT；生产环境必须通过环境变量注入独立的高强度密钥。
   token-style: jwt
   token-prefix: Bearer
-  jwt-secret-key: ${SA_TOKEN_JWT_SECRET_KEY:myagent-local-development-jwt-secret-change-in-production-2026}
+  jwt-secret-key: ${SA_TOKEN_JWT_SECRET_KEY:YOUR_JWT_SECRET_CHANGE_ME}
   is-log: false
   is-print: false
 
@@ -151,9 +151,9 @@ rag:
     kb-bucket: myagent-sources
     asset-bucket: myagent-assets
     s3:
-      endpoint: http://127.0.0.1:9000
-      access-key: rustfsadmin
-      secret-key: rustfsadmin
+      endpoint: ${RAG_STORAGE_S3_ENDPOINT:http://127.0.0.1:9000}
+      access-key: ${RAG_STORAGE_S3_ACCESS_KEY:YOUR_S3_ACCESS_KEY}
+      secret-key: ${RAG_STORAGE_S3_SECRET_KEY:YOUR_S3_SECRET_KEY}
       region: us-east-1
       path-style: true
   vector:

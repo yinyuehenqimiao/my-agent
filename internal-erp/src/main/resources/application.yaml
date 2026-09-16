@@ -1,0 +1,23 @@
+server:
+  port: 18081
+spring:
+  datasource:
+    url: ${ERP_DB_URL:jdbc:postgresql://127.0.0.1:5432/internal_erp}
+    username: ${ERP_DB_USERNAME:postgres}
+    password: ${ERP_DB_PASSWORD:YOUR_POSTGRES_PASSWORD}
+  sql:
+    init:
+      mode: never
+erp:
+  security:
+    service-token: ${ERP_SERVICE_TOKEN:}
+  mcp:
+    jwt:
+      # 仅配置公钥后启用 /mcp；私钥保留在智能体平台或密钥服务中。
+      public-key: ${ERP_MCP_JWT_PUBLIC_KEY:}
+      issuer: ${ERP_MCP_JWT_ISSUER:my-agent}
+      audience: ${ERP_MCP_JWT_AUDIENCE:internal-erp}
+logging:
+  charset:
+    console: UTF-8
+    file: UTF-8

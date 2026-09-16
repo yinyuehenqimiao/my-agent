@@ -2,11 +2,11 @@
 
 ## 启动
 
-项目使用 `D:\maven\apache-maven-3.6.3\conf\settings.xml` 和本地仓库 `D:\maven\apache-maven-3.6.3\repository`，已写入 `.mvn/maven.config`。其他机器请调整该本地配置。
+项目使用本机 Maven。如需固定 `settings.xml` 与本地仓库，复制 `.mvn/maven.config.example` 为 `.mvn/maven.config`（该文件已被 Git 忽略）。
 
 中间件容器、端口和检查命令见 [MIDDLEWARE.md](MIDDLEWARE.md)。
 
-1. 启动项目现有 PostgreSQL/pgvector、Redis、MinIO/S3、RocketMQ，并按 `application.yaml` 配置连接和模型密钥。已有库只执行增量 SQL `resources/database/upgrades/v0.4.0/01_enterprise.sql`；新库执行 `resources/database/init.ps1`。脚本必须指向项目自己的 `myagent` 库，不要指向其他项目库。
+1. 启动 PostgreSQL/pgvector、Redis、MinIO/S3、RocketMQ（可用仓库 `deploy/docker-compose.yml`），并按 `.env.example` 配置连接和模型密钥。已有库按版本执行 `resources/database/upgrades/` 下尚未应用的脚本；新库执行 `resources/database/init.ps1`。必须指向本项目的 `myagent` 库，不要和其他项目共用。
 2. 在项目根目录运行 `mvn package -DskipTests`，然后运行 `java -jar bootstrap/target/bootstrap-0.0.1-SNAPSHOT.jar --spring.profiles.active=enterprise`。该 profile 启用企业模块及演示账号，关闭公网检索。原默认 profile 不自动启用企业功能。
 3. 在 `frontend` 下运行 `npm run dev`，打开前端登录页。聊天侧栏进入“请假与审批工作台”，管理员在“企业配置”维护关系、授权及工作日历。
 

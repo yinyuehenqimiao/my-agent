@@ -1,0 +1,10 @@
+This product is inspired by and references Ragent:
+
+    https://github.com/nageoffer/ragent
+
+Ragent is an enterprise Agentic RAG project. my-agent keeps the RAG / Agent /
+MCP engineering baseline learned from Ragent, and extends it toward enterprise
+workflow execution, confirmation-gated writes, platform RBAC, reasoning-trace
+audit, and an isolated ERP integration boundary.
+
+Please respect Ragent's own license when reading or reusing that project.

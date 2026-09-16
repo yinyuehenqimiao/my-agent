@@ -1,0 +1,7 @@
+# 如需固定本机 Maven settings / 本地仓库，复制本文件为 maven.config。
+# maven.config 已被 Git 忽略，避免把本机绝对路径提交到仓库。
+#
+# 示例（请改成你自己的路径）：
+# -s
+# /path/to/maven/conf/settings.xml
+# -Dmaven.repo.local=/path/to/maven/repository

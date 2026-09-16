@@ -5,16 +5,30 @@ target/
 .project
 .settings/
 *.log
-.env
 .DS_Store
 # Stray compiled artifacts outside target/ (e.g. HashProbe.class probe output)
 *.class
+
+### Secrets and machine-local config — never commit real keys ###
+.env
+**/.env
+!.env.example
+!frontend/.env.example
+!internal-erp/.env.example
+.mvn/maven.config
+**/.mvn/maven.config
+*.pem
+*.p12
+*.jks
+*.key
 
 ### Frontend ###
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/.env
 frontend/.env.local
-# Local enterprise evaluation contains conversations and business identifiers.
+# Local design notes and demo password sheets stay on the machine.
+docs/方向/
 resources/enterprise/*.local.json
 resources/enterprise/*.local.png

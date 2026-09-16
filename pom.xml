@@ -9,7 +9,7 @@
     <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>my-agent</name>
-    <description>学习型 Agent（依赖版本对齐 ragent）</description>
+    <description>企业知识问答与受控业务办理智能体（参考 Ragent，扩展工作流、审计与 ERP 隔离）</description>
 
     <modules>
         <module>framework</module>

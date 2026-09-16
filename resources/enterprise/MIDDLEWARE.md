@@ -19,16 +19,15 @@ MinIO：9000 是 S3 API，9001 是管理控制台。容器使用 Docker 卷 `mya
 ```powershell
 docker ps
 docker logs --tail 50 myagent-minio
-docker exec redis redis-cli -a 123456 ping
+docker exec redis redis-cli -a <YOUR_REDIS_PASSWORD> ping
 docker exec postgres psql -U postgres -d myagent -c "SELECT extname FROM pg_extension WHERE extname='vector';"
 ```
 
 ## 启动应用
 
 ```powershell
-cd D:\Project\AI\myAgent\my-agent
 mvn -pl bootstrap -am package -DskipTests
-java -jar bootstrap\target\bootstrap-0.0.1-SNAPSHOT.jar --spring.profiles.active=enterprise
+powershell -ExecutionPolicy Bypass -File .\scripts\start-backend.ps1
 ```
 
 `enterprise` profile 启用企业员工、请假审批和知识库授权能力。模型 Key 使用硅基流动或阿里百炼的环境变量后，再调用对话和向量化功能。
