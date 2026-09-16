@@ -54,4 +54,10 @@ public class RagTraceNodeVO {
     private Date startTime;
 
     private Date endTime;
+
+    /** 便于复现的短摘要，例如路由决策、意图码 */
+    private String resultSummary;
+
+    /** 原始扩展 JSON（已截断） */
+    private String extraData;
 }

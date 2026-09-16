@@ -1,26 +1,11 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.myagent.framework.trace;
 
 import com.alibaba.ttl.TransmittableThreadLocal;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * RAG Trace 上下文
@@ -30,6 +15,12 @@ public final class RagTraceContext {
 
     private static final TransmittableThreadLocal<String> TRACE_ID = new TransmittableThreadLocal<>();
     private static final TransmittableThreadLocal<String> TASK_ID = new TransmittableThreadLocal<>();
+    private static final TransmittableThreadLocal<Map<String, String>> ATTRS = new TransmittableThreadLocal<>() {
+        @Override
+        public Map<String, String> copy(Map<String, String> parentValue) {
+            return parentValue == null ? null : new HashMap<>(parentValue);
+        }
+    };
     // 父线程 -> 子线程的 NODE_STACK 必须深拷贝
     // 默认 copy() 返回父值引用，并发子任务会共用同一个 Deque，
     // 互相 push/pop 时父子节点 ID 串挂，trace 层级紊乱
@@ -57,6 +48,23 @@ public final class RagTraceContext {
 
     public static void setTaskId(String taskId) {
         TASK_ID.set(taskId);
+    }
+
+    public static void putAttr(String key, String value) {
+        if (key == null || key.isBlank() || value == null || value.isBlank()) {
+            return;
+        }
+        Map<String, String> attrs = ATTRS.get();
+        if (attrs == null) {
+            attrs = new HashMap<>();
+            ATTRS.set(attrs);
+        }
+        attrs.put(key, value);
+    }
+
+    public static String getAttr(String key) {
+        Map<String, String> attrs = ATTRS.get();
+        return attrs == null || key == null ? null : attrs.get(key);
     }
 
     public static int depth() {
@@ -93,5 +101,6 @@ public final class RagTraceContext {
         TRACE_ID.remove();
         TASK_ID.remove();
         NODE_STACK.remove();
+        ATTRS.remove();
     }
 }

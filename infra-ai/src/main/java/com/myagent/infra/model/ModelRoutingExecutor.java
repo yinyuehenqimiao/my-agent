@@ -62,6 +62,10 @@ public class ModelRoutingExecutor {
             try {
                 T response = caller.call(client, target);
                 healthStore.markSuccess(target.id());
+                com.myagent.framework.trace.RagTraceContext.putAttr(
+                        "llm.selectedProvider", target.candidate().getProvider());
+                com.myagent.framework.trace.RagTraceContext.putAttr(
+                        "llm.selectedModelId", target.id());
                 return response;
             } catch (Exception e) {
                 last = e;

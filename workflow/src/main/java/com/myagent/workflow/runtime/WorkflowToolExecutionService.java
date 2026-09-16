@@ -19,7 +19,8 @@ public class WorkflowToolExecutionService {
     private final WorkflowConfirmationService confirmations;
 
     public ToolResult execute(ExecutionIdentity identity, Command command) {
-        ToolDefinition definition = gateway.listDefinitions().stream().filter(item -> item.getName().equals(command.toolName())).findFirst()
+        ToolDefinition definition = gateway.listDefinitions(identity, ToolDefinition.Source.WORKFLOW).stream()
+                .filter(item -> item.getName().equals(command.toolName())).findFirst()
                 .orElseThrow(() -> new ClientException("工具不存在或未发布"));
         String actionId = command.confirmationId();
         if (!definition.isReadOnly()) {

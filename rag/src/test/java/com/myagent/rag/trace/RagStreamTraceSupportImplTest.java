@@ -42,6 +42,7 @@ class RagStreamTraceSupportImplTest {
         span.finishError(new IllegalStateException("late error"));
 
         verify(audit, times(1)).finishNode(eq("trace-stream"), eq(node.getValue().getNodeId()),
-                eq("SUCCESS"), org.mockito.ArgumentMatchers.isNull(), any(), any(Long.class));
+                eq("SUCCESS"), org.mockito.ArgumentMatchers.isNull(), any(), any(Long.class),
+                org.mockito.ArgumentMatchers.contains("openai-stream"));
     }
 }

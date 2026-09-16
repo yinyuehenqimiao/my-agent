@@ -12,6 +12,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import com.myagent.workflow.service.AuditQueryService;
 
 import java.util.Date;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -56,7 +57,8 @@ class RagTraceAuditServiceTest {
         service.startNode(RagTraceNodeDO.builder()
                 .id("row-1").traceId("trace-1").nodeId("node-1").depth(0)
                 .nodeType("INTENT").nodeName("intent-classify").status("RUNNING").startTime(start).build());
-        service.finishNode("trace-1", "node-1", "SUCCESS", null, new Date(), 18L);
+        service.finishNode("trace-1", "node-1", "SUCCESS", null, new Date(), 18L,
+                TraceResultSummarizer.toExtraData(Map.of("decision", "WORKFLOW", "target", "leave-approval", "intentCode", "leave"), null, 2000));
         service.finishRun("trace-1", "SUCCESS", null, new Date(), 25L);
 
         var own = service.detail(identity("tenant-a"), "trace-1");
@@ -67,6 +69,8 @@ class RagTraceAuditServiceTest {
             assertThat(node.getNodeType()).isEqualTo("INTENT");
             assertThat(node.getStatus()).isEqualTo("SUCCESS");
             assertThat(node.getDurationMs()).isEqualTo(18L);
+            assertThat(node.getResultSummary()).contains("固定流程").contains("leave");
+            assertThat(node.getExtraData()).contains("resultSummary");
         });
         assertThat(service.detail(identity("tenant-b"), "trace-1")).isNull();
     }

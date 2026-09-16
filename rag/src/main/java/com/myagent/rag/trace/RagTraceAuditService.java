@@ -94,11 +94,17 @@ public class RagTraceAuditService {
 
     public void finishNode(String traceId, String nodeId, String status, String errorMessage,
                            Date endTime, long durationMs) {
+        finishNode(traceId, nodeId, status, errorMessage, endTime, durationMs, null);
+    }
+
+    public void finishNode(String traceId, String nodeId, String status, String errorMessage,
+                           Date endTime, long durationMs, String extraData) {
         auditedWrite("finish_node", traceId, () -> jdbc.update("""
                         UPDATE t_rag_trace_node
-                           SET status=?,error_message=?,end_time=?,duration_ms=?,update_time=CURRENT_TIMESTAMP
+                           SET status=?,error_message=?,end_time=?,duration_ms=?,extra_data=?,update_time=CURRENT_TIMESTAMP
                          WHERE trace_id=? AND node_id=? AND deleted=0
-                        """, status, truncate(errorMessage), timestamp(endTime), Math.max(0L, durationMs), traceId, nodeId));
+                        """, status, truncate(errorMessage), timestamp(endTime), Math.max(0L, durationMs),
+                truncateExtra(extraData), traceId, nodeId));
     }
 
     public RagTraceDetailVO detail(ExecutionIdentity identity, String traceId) {
@@ -114,7 +120,7 @@ public class RagTraceAuditService {
         }
         List<RagTraceNodeVO> nodes = jdbc.query("""
                         SELECT n.trace_id,n.node_id,n.parent_node_id,n.depth,n.node_type,n.node_name,n.class_name,
-                               n.method_name,n.status,n.error_message,n.duration_ms,n.start_time,n.end_time
+                               n.method_name,n.status,n.error_message,n.duration_ms,n.start_time,n.end_time,n.extra_data
                           FROM t_rag_trace_node n
                           JOIN t_rag_trace_run r ON r.trace_id=n.trace_id AND r.deleted=0
                          WHERE n.trace_id=? AND r.tenant_id=? AND n.deleted=0
@@ -233,6 +239,7 @@ public class RagTraceAuditService {
     }
 
     private RagTraceNodeVO toNode(ResultSet rs) throws SQLException {
+        String extraData = rs.getString("extra_data");
         return RagTraceNodeVO.builder()
                 .traceId(rs.getString("trace_id")).nodeId(rs.getString("node_id"))
                 .parentNodeId(rs.getString("parent_node_id")).depth(rs.getInt("depth"))
@@ -240,7 +247,10 @@ public class RagTraceAuditService {
                 .className(rs.getString("class_name")).methodName(rs.getString("method_name"))
                 .status(rs.getString("status")).errorMessage(rs.getString("error_message"))
                 .durationMs(nullableLong(rs, "duration_ms"))
-                .startTime(rs.getTimestamp("start_time")).endTime(rs.getTimestamp("end_time")).build();
+                .startTime(rs.getTimestamp("start_time")).endTime(rs.getTimestamp("end_time"))
+                .resultSummary(TraceResultSummarizer.extractSummary(extraData))
+                .extraData(extraData)
+                .build();
     }
 
     private String question(String extraData) {
@@ -267,6 +277,12 @@ public class RagTraceAuditService {
     private String truncate(String value) {
         if (value == null || value.length() <= properties.getMaxErrorLength()) return value;
         return value.substring(0, properties.getMaxErrorLength());
+    }
+
+    private String truncateExtra(String value) {
+        int max = Math.max(64, properties.getMaxExtraDataLength());
+        if (value == null || value.length() <= max) return value;
+        return value.substring(0, max - 1) + "…";
     }
 
     private Timestamp timestamp(Date value) {

@@ -41,20 +41,24 @@ public class RagStreamTraceSupportImpl implements RagStreamTraceSupport {
             return NOOP_SPAN;
         }
         RagTraceContext.pushNode(nodeId);
-        return new Span(traceId, nodeId, started);
+        return new Span(traceId, nodeId, started, name, type);
     }
 
     private final class Span implements StreamSpan {
         private final String traceId;
         private final String nodeId;
         private final long started;
+        private final String nodeName;
+        private final String nodeType;
         private final AtomicBoolean detached = new AtomicBoolean();
         private final AtomicBoolean finished = new AtomicBoolean();
 
-        private Span(String traceId, String nodeId, long started) {
+        private Span(String traceId, String nodeId, long started, String nodeName, String nodeType) {
             this.traceId = traceId;
             this.nodeId = nodeId;
             this.started = started;
+            this.nodeName = nodeName;
+            this.nodeType = nodeType;
         }
 
         @Override
@@ -65,29 +69,55 @@ public class RagStreamTraceSupportImpl implements RagStreamTraceSupport {
         }
 
         @Override
-        public void finishSuccess() {
-            finish("SUCCESS", null);
+        public void finishSuccess(String resultSummary) {
+            finish("SUCCESS", null, resultSummary);
         }
 
         @Override
         public void finishError(Throwable error) {
-            finish("ERROR", errorText(error));
+            finish("ERROR", errorText(error), null);
         }
 
         @Override
         public void finishCancelledIfRunning() {
-            finish("CANCELLED", null);
+            finish("CANCELLED", null, null);
         }
 
-        private void finish(String status, String error) {
+        private void finish(String status, String error, String resultSummary) {
             if (!finished.compareAndSet(false, true)) return;
             try {
+                String summary = hasText(resultSummary) ? resultSummary : defaultSummary(status, error);
+                String extra = TraceResultSummarizer.toExtraData(summary, error, properties.getMaxExtraDataLength(), nodeType);
                 auditService.finishNode(traceId, nodeId, status, error, new Date(),
-                        System.currentTimeMillis() - started);
+                        System.currentTimeMillis() - started, extra);
             } catch (Exception auditError) {
                 log.warn("流式节点 Trace 收尾失败, traceId: {}, node: {}", traceId, nodeId, auditError);
             }
         }
+
+        private String defaultSummary(String status, String error) {
+            String type = StrUtil.blankToDefault(nodeType, "").toUpperCase();
+            String name = StrUtil.blankToDefault(nodeName, "流式节点");
+            return switch (status) {
+                case "SUCCESS" -> switch (type) {
+                    case "WORKFLOW" -> "固定流程执行完成：" + stripPrefix(name, "workflow-agent:");
+                    case "REACT" -> "开放式智能体执行完成：" + stripPrefix(name, "react-agent:");
+                    case "LLM_PROVIDER" -> "模型供应商流式输出完成：" + name;
+                    case "LLM_ROUTING" -> "LLM 路由流式调用完成";
+                    default -> "流式调用完成：" + name;
+                };
+                case "CANCELLED" -> "流式调用已取消：" + name;
+                case "ERROR" -> hasText(error) ? error : ("流式调用失败：" + name);
+                default -> status + "：" + name;
+            };
+        }
+    }
+
+    private static String stripPrefix(String value, String prefix) {
+        if (value != null && value.startsWith(prefix)) {
+            return value.substring(prefix.length());
+        }
+        return value;
     }
 
     private String errorText(Throwable error) {
@@ -101,3 +131,4 @@ public class RagStreamTraceSupportImpl implements RagStreamTraceSupport {
         return value != null && !value.isBlank();
     }
 }
+

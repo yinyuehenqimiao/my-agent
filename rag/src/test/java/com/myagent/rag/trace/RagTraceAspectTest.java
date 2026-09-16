@@ -42,7 +42,7 @@ class RagTraceAspectTest {
         assertThat(node.getValue().getParentNodeId()).isEqualTo("parent-1");
         assertThat(node.getValue().getNodeType()).isEqualTo("INTENT");
         verify(audit).finishNode(eq("trace-1"), eq(node.getValue().getNodeId()), eq("SUCCESS"),
-                org.mockito.ArgumentMatchers.isNull(), any(), any(Long.class));
+                org.mockito.ArgumentMatchers.isNull(), any(), any(Long.class), any());
         assertThat(RagTraceContext.currentNodeId()).isEqualTo("parent-1");
     }
 
@@ -61,7 +61,7 @@ class RagTraceAspectTest {
         ArgumentCaptor<RagTraceNodeDO> node = ArgumentCaptor.forClass(RagTraceNodeDO.class);
         verify(audit).startNode(node.capture());
         verify(audit).finishNode(eq("trace-2"), eq(node.getValue().getNodeId()), eq("ERROR"),
-                org.mockito.ArgumentMatchers.contains("分类失败"), any(), any(Long.class));
+                org.mockito.ArgumentMatchers.contains("分类失败"), any(), any(Long.class), any());
     }
 
     static class SamplePipeline {

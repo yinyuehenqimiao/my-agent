@@ -1,20 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.myagent.framework.trace;
 
 /**
@@ -47,7 +30,14 @@ public interface RagStreamTraceSupport {
         /**
          * 异步线程上：onComplete 时调用，CAS 保证幂等
          */
-        void finishSuccess();
+        default void finishSuccess() {
+            finishSuccess(null);
+        }
+
+        /**
+         * 异步线程上成功收尾，可附带业务结果摘要便于审计复现。
+         */
+        void finishSuccess(String resultSummary);
 
         /**
          * 异步线程上：onError 时调用，CAS 保证幂等
@@ -65,7 +55,7 @@ public interface RagStreamTraceSupport {
      */
     StreamSpan NOOP_SPAN = new StreamSpan() {
         @Override public void detach() {}
-        @Override public void finishSuccess() {}
+        @Override public void finishSuccess(String resultSummary) {}
         @Override public void finishError(Throwable error) {}
         @Override public void finishCancelledIfRunning() {}
     };

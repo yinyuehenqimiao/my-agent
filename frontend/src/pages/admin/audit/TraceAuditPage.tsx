@@ -59,22 +59,89 @@ function nodeIcon(type?: string | null) {
   return Zap;
 }
 
-function buildWaterfall(nodes: TraceNode[]) {
+const NODE_TYPE_LABEL: Record<string, string> = {
+  INTENT: "意图识别",
+  ROUTING: "路由规划",
+  ROUTING_DECISION: "路由决策",
+  LLM_ROUTING: "LLM 路由层",
+  LLM_PROVIDER: "模型供应商调用",
+  LLM_TTFT: "首包耗时",
+  WORKFLOW: "固定流程",
+  REACT: "开放式智能体",
+  REWRITE: "问题改写",
+  RETRIEVE: "知识检索",
+  STREAM: "流式执行",
+};
+
+function nodeTypeLabel(type?: string | null) {
+  if (!type) return "节点";
+  return NODE_TYPE_LABEL[type.toUpperCase()] || type;
+}
+
+function nodeTitle(node: TraceNode) {
+  const raw = node.nodeName || node.nodeId || "未命名节点";
+  if (raw.startsWith("workflow-agent:")) {
+    return `固定流程：${raw.slice("workflow-agent:".length)}`;
+  }
+  if (raw.startsWith("react-agent:")) {
+    return `开放智能体：${raw.slice("react-agent:".length)}`;
+  }
+  const labels: Record<string, string> = {
+    "intent-classify": "意图识别（打分）",
+    "intent-resolve": "意图解析",
+    "chat-route-plan": "聊天路由规划",
+    "routing-decision": "路由策略判定",
+    "llm-chat-routing": "LLM 路由（选择可用模型）",
+    "llm-stream-routing": "LLM 流式路由",
+    "siliconflow-chat": "SiliconFlow 模型调用",
+    "bailian-chat": "百炼模型调用",
+    "ollama-chat": "Ollama 模型调用",
+    "aihubmix-chat": "AIHubMix 模型调用",
+    "query-rewrite": "问题改写",
+    "query-rewrite-and-split": "问题改写与拆分",
+    "retrieval-engine": "知识库检索",
+    "llm-first-packet": "等待模型首包",
+  };
+  return labels[raw] || raw;
+}
+
+function nodeSubtitle(node: TraceNode) {
+  const parts = [nodeTypeLabel(node.nodeType)];
+  if (node.parentNodeId) parts.push(`父节点 …${node.parentNodeId.slice(-6)}`);
+  if (node.depth != null) parts.push(`深度 ${node.depth}`);
+  if (node.nodeName && nodeTitle(node) !== node.nodeName) {
+    parts.push(node.nodeName);
+  }
+  return parts.join(" · ");
+}
+
+
+function toEpoch(value?: string | null) {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+/** 按整次请求墙钟摆放节点条；父子嵌套会导致节点耗时之和大于总耗时。 */
+function buildWaterfall(nodes: TraceNode[], run?: TraceRun | null) {
   if (!nodes.length) return [];
-  const maxDuration = Math.max(1, ...nodes.map((node) => Math.max(node.durationMs ?? 0, 1)));
-  const span = Math.max(
+  const runStart = toEpoch(run?.startTime) ?? toEpoch(nodes[0]?.startTime) ?? 0;
+  const runDuration = Math.max(
     1,
-    nodes.reduce((sum, node) => sum + Math.max(node.durationMs ?? 0, 1), 0),
+    run?.durationMs
+      ?? ((toEpoch(run?.endTime) ?? runStart) - runStart)
+      ?? 1,
   );
-  let cursor = 0;
+  const maxDuration = Math.max(1, ...nodes.map((node) => Math.max(node.durationMs ?? 0, 1)));
+
   return nodes.map((node, index) => {
+    const start = toEpoch(node.startTime);
     const duration = Math.max(node.durationMs ?? 0, 0);
-    const visual = Math.max(duration, 1);
-    const left = (cursor / span) * 100;
-    const width = Math.max((visual / span) * 100, 3);
-    const share = Math.round((visual / maxDuration) * 100);
-    cursor += visual;
-    return { node, left, width, duration, share, index };
+    const offset = start == null ? 0 : Math.max(0, start - runStart);
+    const left = Math.min(97, (offset / runDuration) * 100);
+    const width = Math.max(Math.min((Math.max(duration, 1) / runDuration) * 100, 100 - left), 2.5);
+    const relative = Math.round((Math.max(duration, 1) / maxDuration) * 100);
+    return { node, left, width, duration, relative, index, offset };
   });
 }
 
@@ -135,8 +202,8 @@ export function TraceAuditPage() {
   };
 
   const waterfall = useMemo(
-    () => buildWaterfall(detail?.nodes ?? []),
-    [detail?.nodes],
+    () => buildWaterfall(detail?.nodes ?? [], detail?.run),
+    [detail?.nodes, detail?.run],
   );
 
   const detailStats = useMemo(() => {
@@ -145,8 +212,7 @@ export function TraceAuditPage() {
     const failed = nodes.filter((n) => ["ERROR", "FAILED", "TIMEOUT"].includes(n.status)).length;
     const running = nodes.filter((n) => n.status === "RUNNING").length;
     const hotspot = [...nodes].sort((a, b) => (b.durationMs ?? 0) - (a.durationMs ?? 0))[0];
-    const progress = nodes.length ? Math.round((success / nodes.length) * 100) : 0;
-    return { success, failed, running, hotspot, progress, total: nodes.length };
+    return { success, failed, running, hotspot, total: nodes.length };
   }, [detail?.nodes]);
 
   return (
@@ -312,19 +378,33 @@ export function TraceAuditPage() {
 
               <div className="trace-console-progress">
                 <div className="trace-console-progress-head">
-                  <span>链路完成度</span>
-                  <strong>{detailStats.progress}%</strong>
+                  <span>节点执行结果</span>
+                  <strong>{detailStats.success} 成功 / 共 {detailStats.total}</strong>
                 </div>
                 <div className="trace-console-progress-track">
-                  <div className="trace-console-progress-fill" style={{ width: `${detailStats.progress}%` }} />
-                  <div className="trace-console-progress-glow" style={{ left: `calc(${detailStats.progress}% - 8px)` }} />
+                  <div
+                    className="trace-console-progress-fill"
+                    style={{
+                      width: `${detailStats.total ? Math.round((detailStats.success / detailStats.total) * 100) : 0}%`,
+                    }}
+                  />
                 </div>
+                <p className="trace-console-hint">
+                  总耗时是整次请求的墙钟时间；节点可嵌套，各节点耗时相加不必等于总耗时。时间条按节点起止相对总时长对齐。
+                  LLM 路由 / 模型调用在意图识别阶段返回的是分类打分，不是最终用户答复。
+                </p>
                 <div className="trace-console-meta">
                   <div><span>用户</span><strong>{userLabel(detail?.run ?? {})}</strong></div>
                   <div><span>状态</span><strong data-tone={statusTone(detail?.run.status)}>{detail?.run.status || "-"}</strong></div>
                   <div><span>总耗时</span><strong>{detail?.run.durationMs == null ? "-" : `${detail.run.durationMs} ms`}</strong></div>
                   <div><span>问题</span><strong title={detail?.run.question || ""}>{detail?.run.question || "-"}</strong></div>
                 </div>
+                {(detail?.run.status === "ERROR" || detail?.run.status === "FAILED" || detail?.run.errorMessage) && (
+                  <div className="trace-console-error" role="alert">
+                    <strong>运行错误</strong>
+                    <span>{detail?.run.errorMessage || "未记录具体错误信息，请结合节点失败项或服务端日志排查。"}</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -371,7 +451,7 @@ export function TraceAuditPage() {
                         <div className="trace-console-rail-dot"><Icon className="h-3.5 w-3.5" /></div>
                         <div className="trace-console-rail-label">
                           <span>STEP {index + 1}</span>
-                          <strong>{node.nodeName || node.nodeId}</strong>
+                          <strong>{nodeTitle(node)}</strong>
                         </div>
                         {index < waterfall.length - 1 && <div className="trace-console-rail-line" />}
                       </div>
@@ -383,14 +463,15 @@ export function TraceAuditPage() {
               <section className="trace-console-timeline">
                 <div className="trace-console-section-head">
                   <h3>推理节点时间线</h3>
-                  <span>{detailStats.total} 个节点 · 相对耗时瀑布图</span>
+                  <span>{detailStats.total} 个节点 · 按墙钟对齐</span>
                 </div>
                 <div className="trace-console-timeline-list">
                   {waterfall.length === 0 && (
                     <div className="trace-console-empty">暂无推理节点</div>
                   )}
-                  {waterfall.map(({ node, left, width, duration, share, index }) => {
+                  {waterfall.map(({ node, left, width, duration, relative, index }) => {
                     const Icon = nodeIcon(node.nodeType);
+                    const summary = node.resultSummary || node.errorMessage || null;
                     return (
                       <div
                         key={node.nodeId}
@@ -407,8 +488,8 @@ export function TraceAuditPage() {
                             <div className="trace-console-step-title">
                               <span className="trace-console-step-icon"><Icon className="h-4 w-4" /></span>
                               <div>
-                                <div className="trace-console-step-name">{node.nodeName || node.nodeId}</div>
-                                <div className="trace-console-step-type">{node.nodeType || "NODE"}</div>
+                                <div className="trace-console-step-name">{nodeTitle(node)}</div>
+                                <div className="trace-console-step-type">{nodeSubtitle(node)}</div>
                               </div>
                             </div>
                             <div className="trace-console-step-metrics">
@@ -420,18 +501,30 @@ export function TraceAuditPage() {
                             </div>
                           </div>
                           <div className="trace-console-bar-row">
-                            <div className="trace-console-bar-track">
+                            <div className="trace-console-bar-track" title={`相对总时长偏移与宽度`}>
                               <div
                                 className="trace-console-bar-span"
                                 style={{ left: `${left}%`, width: `${width}%` }}
                               />
                               <div
                                 className="trace-console-bar-fill"
-                                style={{ width: `${share}%` }}
+                                style={{ width: `${relative}%` }}
                               />
                             </div>
-                            <span className="trace-console-bar-share">{share}%</span>
+                            <span className="trace-console-bar-share">{duration} ms</span>
                           </div>
+                          {summary && (
+                            <div className="trace-console-step-result">
+                              <span>结果</span>
+                              <code title={node.extraData || summary}>{summary}</code>
+                            </div>
+                          )}
+                          {node.className && (
+                            <div className="trace-console-step-meta">
+                              {node.className.split(".").slice(-1)[0]}
+                              {node.methodName ? `#${node.methodName}` : ""}
+                            </div>
+                          )}
                         </div>
                       </div>
                     );

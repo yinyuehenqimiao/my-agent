@@ -322,7 +322,7 @@ class AgentChatServiceImplTest {
         verify(traceAuditService).finishRun(eq(run.getValue().getTraceId()), eq("SUCCESS"),
                 org.mockito.ArgumentMatchers.isNull(), any(), anyLong());
         verify(streamTraceSupport).beginStreamNode("react-agent:default", "REACT");
-        verify(executionSpan).finishSuccess();
+        verify(executionSpan).finishSuccess(org.mockito.ArgumentMatchers.contains("开放式智能体"));
         verify(executionSpan).detach();
     }
 
@@ -385,7 +385,7 @@ class AgentChatServiceImplTest {
         verify(agentProvider).getWorkflowAgent("leave-approval");
         verify(agentProvider, never()).getAgent();
         verify(streamTraceSupport).beginStreamNode("workflow-agent:leave-approval", "WORKFLOW");
-        verify(executionSpan).finishSuccess();
+        verify(executionSpan).finishSuccess(org.mockito.ArgumentMatchers.contains("固定流程"));
         verify(continuationResolver).synchronizeAfterWorkflowTurn(
                 "default", USER_ID, CONVERSATION_ID);
     }

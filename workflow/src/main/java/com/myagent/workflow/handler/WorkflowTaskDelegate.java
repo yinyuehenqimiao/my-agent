@@ -21,6 +21,9 @@ public class WorkflowTaskDelegate implements JavaDelegate {
 
     private final WorkflowTaskHandlerRegistry registry;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.myagent.workflow.runtime.WorkflowNodeExecutionRecorder executionRecorder;
+
     @Override
     public void execute(DelegateExecution execution) {
         String activityId = execution.getCurrentActivityId();
@@ -33,12 +36,15 @@ public class WorkflowTaskDelegate implements JavaDelegate {
             throw new IllegalStateException("未注册的工作流任务处理器: "
                     + (nodeType == null ? activityId : nodeType + ":v" + versionText));
         }
+        String executionId = executionRecorder == null ? null : executionRecorder.start(execution, nodeType);
         try {
             handler.handle(execution);
+            if (executionRecorder != null) executionRecorder.success(executionId, execution);
         } catch (Exception e) {
             log.error("workflow task handler failed activity={} traceId={}", activityId, execution.getProcessInstanceBusinessKey(), e);
-            if (e instanceof RuntimeException re) throw re;
-            throw new RuntimeException(e);
+            RuntimeException runtime = e instanceof RuntimeException re ? re : new RuntimeException(e);
+            if (executionRecorder != null) executionRecorder.failure(executionId, runtime);
+            throw runtime;
         }
     }
 

@@ -236,7 +236,7 @@ public class AgentChatServiceImpl implements AgentChatService {
                 case ERROR -> "ERROR";
             }, error);
             switch (settlement) {
-                case SUCCESS -> executionSpan.finishSuccess();
+                case SUCCESS -> executionSpan.finishSuccess(executionSuccessSummary(decision, plan));
                 case CANCELLED -> executionSpan.finishCancelledIfRunning();
                 case ERROR -> executionSpan.finishError(error);
             }
@@ -298,12 +298,37 @@ public class AgentChatServiceImpl implements AgentChatService {
         }
     }
 
+    private String executionSuccessSummary(RouteDecision decision, ChatRoutePlan plan) {
+        String intentName = StrUtil.blankToDefault(plan.intentName(), plan.intentCode());
+        String target = plan.route() == null ? null : plan.route().getTarget();
+        String reason = plan.route() == null ? null : plan.route().getReason();
+        if (decision == RouteDecision.WORKFLOW) {
+            return "固定流程执行完成："
+                    + StrUtil.blankToDefault(intentName, "未命名流程")
+                    + "（" + StrUtil.blankToDefault(target, "unknown") + "）"
+                    + (StrUtil.isNotBlank(reason) ? "；" + reason : "");
+        }
+        if (decision == RouteDecision.REACT) {
+            return "开放式智能体执行完成："
+                    + StrUtil.blankToDefault(intentName, "开放问答")
+                    + "（配置 " + StrUtil.blankToDefault(target, "default") + "）";
+        }
+        return "执行完成：" + StrUtil.blankToDefault(intentName, decision.name());
+    }
+
     private void finishTrace(TraceRun trace, String status, Throwable error) {
         if (!trace.started() || !trace.finished().compareAndSet(false, true)) {
             return;
         }
         try {
-            String message = error == null ? null : error.getClass().getSimpleName() + ": " + StrUtil.nullToEmpty(error.getMessage());
+            String message = error == null
+                    ? null
+                    : error.getClass().getSimpleName() + ": " + StrUtil.nullToEmpty(error.getMessage());
+            if ("ERROR".equals(status) && (message == null || message.isBlank() || message.endsWith(": "))) {
+                message = message == null || message.isBlank()
+                        ? "执行失败（未附带异常详情）"
+                        : message + "（无详细 message）";
+            }
             traceAuditService.finishRun(trace.traceId(), status, message, new Date(),
                     System.currentTimeMillis() - trace.startMillis());
         } catch (Exception auditError) {

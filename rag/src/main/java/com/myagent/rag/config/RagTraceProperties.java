@@ -38,4 +38,9 @@ public class RagTraceProperties {
      * 错误信息最大长度，防止落库过大
      */
     private int maxErrorLength = 1000;
+
+    /**
+     * 节点结果摘要（extra_data）最大长度
+     */
+    private int maxExtraDataLength = 2000;
 }

@@ -29,6 +29,8 @@ export interface TraceNode {
   durationMs?: number | null;
   startTime?: string | null;
   endTime?: string | null;
+  resultSummary?: string | null;
+  extraData?: string | null;
 }
 export interface TraceEvent {
   id: string;

@@ -55,20 +55,23 @@ public class RagTraceAspect {
         RagTraceContext.pushNode(nodeId);
         try {
             Object result = joinPoint.proceed();
-            finish(traceId, nodeId, "SUCCESS", null, started);
+            finish(traceId, nodeId, "SUCCESS", null, started, result, traceNode.type());
             return result;
         } catch (Throwable error) {
-            finish(traceId, nodeId, "ERROR", errorText(error), started);
+            finish(traceId, nodeId, "ERROR", errorText(error), started, null, traceNode.type());
             throw error;
         } finally {
             RagTraceContext.popNode();
         }
     }
 
-    private void finish(String traceId, String nodeId, String status, String error, long started) {
+    private void finish(String traceId, String nodeId, String status, String error, long started,
+                        Object result, String nodeType) {
         try {
+            String extra = TraceResultSummarizer.toExtraData(
+                    result, error, properties.getMaxExtraDataLength(), nodeType);
             auditService.finishNode(traceId, nodeId, status, error, new Date(),
-                    System.currentTimeMillis() - started);
+                    System.currentTimeMillis() - started, extra);
         } catch (Exception auditError) {
             log.warn("推理节点 Trace 收尾失败，继续执行业务, traceId: {}, node: {}", traceId, nodeId, auditError);
         }

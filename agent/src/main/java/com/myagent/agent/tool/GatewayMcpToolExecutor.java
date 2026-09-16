@@ -17,19 +17,29 @@ import java.util.List;
 import java.util.Map;
 
 /** 将 Tool Gateway 中的动态只读工具适配给 AgentScope，实际调用仍经过网关安全管道。 */
-final class GatewayMcpToolExecutor implements McpToolExecutor {
+public class GatewayMcpToolExecutor implements McpToolExecutor {
     private final ToolGateway gateway;
     private final ToolDefinition definition;
     private final ExecutionIdentity identity;
     private final ObjectMapper json;
     private final Tool protocolDefinition;
+    private final java.util.concurrent.atomic.AtomicInteger callCounter;
+    private final int maxCalls;
 
-    GatewayMcpToolExecutor(ToolGateway gateway, ToolDefinition definition,
-                           ExecutionIdentity identity, ObjectMapper json) {
+    public GatewayMcpToolExecutor(ToolGateway gateway, ToolDefinition definition,
+                                  ExecutionIdentity identity, ObjectMapper json) {
+        this(gateway, definition, identity, json, null, Integer.MAX_VALUE);
+    }
+
+    public GatewayMcpToolExecutor(ToolGateway gateway, ToolDefinition definition,
+                                  ExecutionIdentity identity, ObjectMapper json,
+                                  java.util.concurrent.atomic.AtomicInteger callCounter, int maxCalls) {
         this.gateway = gateway;
         this.definition = definition;
         this.identity = identity;
         this.json = json;
+        this.callCounter = callCounter;
+        this.maxCalls = maxCalls;
         Map<String, Object> schema = definition.getInputSchema() == null ? Map.of() : definition.getInputSchema();
         @SuppressWarnings("unchecked")
         Map<String, Object> properties = (Map<String, Object>) schema.getOrDefault("properties", Map.of());
@@ -47,6 +57,10 @@ final class GatewayMcpToolExecutor implements McpToolExecutor {
 
     @Override
     public CallToolResult execute(Map<String, Object> parameters) {
+        if (callCounter != null && callCounter.incrementAndGet() > maxCalls) {
+            return CallToolResult.builder().content(List.of(new TextContent("工具调用次数超过节点预算")))
+                    .isError(true).build();
+        }
         ToolResult result = gateway.invoke(ToolInvocation.builder()
                 .toolName(definition.getName())
                 .input(parameters == null ? Map.of() : parameters)

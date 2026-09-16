@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Instant;
 
 /** 动态流程公开运行入口：固定注入身份，持久化实例与等待游标，并提供幂等恢复。 */
 @Service
@@ -23,6 +24,11 @@ public class DynamicWorkflowRuntimeService {
     private final WorkflowRuntimeService workflowRuntime;
     private final RuntimeService runtimeService;
     private final TaskService taskService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private WorkflowNodeContextFactory nodeContexts;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private WorkflowConfirmationService confirmations;
 
     public InstanceView start(ExecutionIdentity identity, StartCommand command) {
         requireIdentity(identity); requireText(command.defKey(), "缺少流程定义"); requireText(command.idempotencyKey(), "缺少幂等键");
@@ -53,7 +59,10 @@ public class DynamicWorkflowRuntimeService {
         int changed = jdbc.update("UPDATE wf_wait_state SET status='RESUMING',lock_version=lock_version+1,updated_time=CURRENT_TIMESTAMP WHERE id=? AND lock_version=? AND status='WAITING'", waitId, lockVersion);
         if (changed != 1) throw new ClientException("等待任务已处理，请刷新后重试");
         String instanceId = String.valueOf(wait.get("instance_id"));
-        taskService.complete(String.valueOf(wait.get("flowable_task_id")), sanitize(input));
+        InstanceView before = get(identity, instanceId);
+        Map<String, Object> completion = prepareCompletion(identity, before,
+                String.valueOf(wait.get("flowable_task_id")), sanitize(input));
+        taskService.complete(String.valueOf(wait.get("flowable_task_id")), completion);
         jdbc.update("UPDATE wf_wait_state SET status='COMPLETED',updated_time=CURRENT_TIMESTAMP WHERE id=?", waitId);
         InstanceView view = get(identity, instanceId);
         if (view.flowableInstanceId() != null && runtimeService.createProcessInstanceQuery().processInstanceId(view.flowableInstanceId()).singleResult() != null) {
@@ -88,10 +97,71 @@ public class DynamicWorkflowRuntimeService {
         taskService.createTaskQuery().processInstanceId(flowableId).active().list().forEach(task -> {
             Integer count = jdbc.queryForObject("SELECT count(*) FROM wf_wait_state WHERE flowable_task_id=?", Integer.class, task.getId());
             if (count != null && count > 0) return;
-            jdbc.update("INSERT INTO wf_wait_state(id,instance_id,flowable_task_id,tenant_id,user_id,conversation_id,node_instance_id,wait_type,status) VALUES(?,?,?,?,?,?,?,'USER','WAITING')",
-                    UUID.randomUUID().toString(), instanceId, task.getId(), identity.getTenantId(), identity.getUserId(), conversationId, task.getTaskDefinitionKey());
+            String waitType = "USER";
+            Object versionValue = runtimeService.getVariable(flowableId, "versionId");
+            if (nodeContexts != null && versionValue instanceof Number number) {
+                String type = nodeContexts.findNode(number.longValue(), task.getTaskDefinitionKey()).type();
+                waitType = switch (type) { case "confirm" -> "CONFIRMATION"; case "human.wait" -> "HUMAN"; default -> "USER"; };
+            }
+            jdbc.update("INSERT INTO wf_wait_state(id,instance_id,flowable_task_id,tenant_id,user_id,conversation_id,node_instance_id,wait_type,status) VALUES(?,?,?,?,?,?,?,?, 'WAITING')",
+                    UUID.randomUUID().toString(), instanceId, task.getId(), identity.getTenantId(), identity.getUserId(), conversationId, task.getTaskDefinitionKey(), waitType);
             jdbc.update("UPDATE wf_instance SET status='WAITING_USER',updated_time=CURRENT_TIMESTAMP WHERE id=?", instanceId);
         });
+    }
+
+    private Map<String, Object> prepareCompletion(ExecutionIdentity identity, InstanceView instance,
+                                                   String taskId, Map<String, Object> input) {
+        if (nodeContexts == null) return input;
+        var task = taskService.createTaskQuery().taskId(taskId).singleResult();
+        if (task == null) throw new ClientException("等待任务不存在或已完成");
+        var node = nodeContexts.findNode(instance.versionId(), task.getTaskDefinitionKey());
+        Map<String, Object> completion = new HashMap<>(input);
+        if ("collect".equals(node.type())) validateCollected(node.config(), completion);
+        if ("confirm".equals(node.type())) {
+            if (!Boolean.TRUE.equals(completion.get("confirmed"))) throw new ClientException("请明确确认后再继续");
+            if (confirmations == null) throw new ClientException("确认服务未启用");
+            Map<String, Object> variables = new HashMap<>(runtimeService.getVariables(instance.flowableInstanceId()));
+            variables.putAll(completion);
+            Map<String, Object> parameters = mapped(node.config(), variables);
+            String toolName = required(node.config().get("toolName"), "确认节点未绑定写工具");
+            String toolVersion = String.valueOf(node.config().getOrDefault("contractVersion", "1"));
+            var created = confirmations.create(identity, instance.id(), node.id(), toolName, toolVersion,
+                    parameters, Instant.now().plusSeconds(900));
+            var confirmed = confirmations.confirm(identity, created.id(), created.lockVersion(), parameters);
+            completion.put(String.valueOf(node.config().getOrDefault("confirmationIdVariable", "confirmationId")), confirmed.id());
+            completion.put(String.valueOf(node.config().getOrDefault("confirmationVersionVariable", "confirmationLockVersion")), confirmed.lockVersion());
+        }
+        return completion;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void validateCollected(Map<String, Object> config, Map<String, Object> input) {
+        Object configured = config.get("fields");
+        if (!(configured instanceof List<?> fields)) return;
+        for (Object item : fields) {
+            if (!(item instanceof Map<?, ?> field)) continue;
+            String name = String.valueOf(field.get("name"));
+            if (Boolean.TRUE.equals(field.get("required")) && (input.get(name) == null
+                    || String.valueOf(input.get(name)).isBlank())) throw new ClientException("缺少字段：" + name);
+            Object value = input.get(name);
+            String type = String.valueOf(field.containsKey("type") ? field.get("type") : "string");
+            if (value != null && "number".equals(type) && !(value instanceof Number))
+                throw new ClientException("字段类型错误：" + name);
+        }
+    }
+
+    private static Map<String, Object> mapped(Map<String, Object> config, Map<String, Object> variables) {
+        Map<String, Object> result = new HashMap<>();
+        if (config.get("constants") instanceof Map<?, ?> constants)
+            constants.forEach((key, value) -> result.put(String.valueOf(key), value));
+        if (config.get("inputMappings") instanceof Map<?, ?> mappings)
+            mappings.forEach((target, source) -> result.put(String.valueOf(target), variables.get(String.valueOf(source))));
+        return result;
+    }
+
+    private static String required(Object value, String message) {
+        if (value == null || String.valueOf(value).isBlank()) throw new ClientException(message);
+        return String.valueOf(value);
     }
 
     private List<InstanceView> findByRequest(ExecutionIdentity identity, String key) {

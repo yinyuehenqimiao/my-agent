@@ -26,7 +26,7 @@ public class WorkflowProcessCompiler {
         validate(process);
         String processId = "wf_" + escapeId(defKey);
         StringBuilder xml = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
-                .append("<definitions xmlns=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:flowable=\"http://flowable.org/bpmn\">")
+                .append("<definitions xmlns=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:flowable=\"http://flowable.org/bpmn\">")
                 .append("<process id=\"").append(processId).append("\" isExecutable=\"true\">");
         for (WorkflowProcess.Node node : process.nodes()) {
             String id = escapeId(node.id());
@@ -42,10 +42,9 @@ public class WorkflowProcessCompiler {
         for (WorkflowProcess.Edge edge : process.edges()) {
             xml.append("<sequenceFlow id=\"").append(escapeId(edge.id())).append("\" sourceRef=\"")
                     .append(escapeId(edge.source())).append("\" targetRef=\"").append(escapeId(edge.target())).append("\"");
-            if (edge.condition() != null) {
-                xml.append(" conditionExpression=\"").append(escapeXml(toExpression(edge.condition()))).append("\"");
-            }
-            xml.append("/>");
+            if (edge.condition() == null) xml.append("/>");
+            else xml.append("><conditionExpression xsi:type=\"tFormalExpression\"><![CDATA[")
+                    .append(toExpression(edge.condition())).append("]]></conditionExpression></sequenceFlow>");
         }
         xml.append("</process></definitions>");
         String bpmn = xml.toString();
