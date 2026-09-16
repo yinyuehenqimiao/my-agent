@@ -95,6 +95,7 @@ public class WorkflowProcessCompiler {
             }
         }
         rejectCyclesAndUnreachable(starts.get(0).id(), nodes, outgoing);
+        requireConfirmationOnEveryWritePath(starts.get(0).id(), nodes, outgoing, false);
     }
 
     private static void validateCondition(WorkflowProcess.Condition condition) {
@@ -115,6 +116,14 @@ public class WorkflowProcessCompiler {
         for (WorkflowProcess.Edge edge : outgoing.getOrDefault(id, List.of())) if (!visited.contains(edge.target())) visit(edge.target(), outgoing, visited, visiting);
         visiting.remove(id);
         visited.add(id);
+    }
+
+    private static void requireConfirmationOnEveryWritePath(String id, Map<String, WorkflowProcess.Node> nodes,
+                                                            Map<String, List<WorkflowProcess.Edge>> outgoing, boolean confirmed) {
+        WorkflowProcess.Node node = nodes.get(id);
+        boolean nextConfirmed = confirmed || "confirm".equals(node.type());
+        if ("tool.execute".equals(node.type()) && !nextConfirmed) throw new ClientException("写操作路径缺少用户确认：" + id);
+        for (WorkflowProcess.Edge edge : outgoing.getOrDefault(id, List.of())) requireConfirmationOnEveryWritePath(edge.target(), nodes, outgoing, nextConfirmed);
     }
 
     private static String toExpression(WorkflowProcess.Condition condition) {

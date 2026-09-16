@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.PreparedStatement;
+import java.util.Map;
 
 /**
  * 工作流版本生命周期服务：草稿 -> 审核 -> 发布 -> 退休，支持回滚。
@@ -83,6 +84,9 @@ public class WorkflowVersionService {
         jdbc.update("INSERT INTO wf_review(version_id,reviewer_id,action,comment,created_time) VALUES(?,?,?,?,CURRENT_TIMESTAMP)",
                 versionId, reviewer, approve ? "APPROVE" : "REJECT", comment);
         updateStatus(v, approve ? VersionStatus.APPROVED : VersionStatus.REJECTED);
+        if (approve) {
+            jdbc.update("UPDATE wf_version SET reviewed_content_hash=content_hash WHERE id=?", versionId);
+        }
         writeAudit(approve ? "WF_APPROVE" : "WF_REJECT", reviewer, "wf_version", String.valueOf(versionId), comment);
     }
 
@@ -90,6 +94,12 @@ public class WorkflowVersionService {
     public void publish(Long versionId, String publisher) {
         WfVersionDO v = getVersion(versionId);
         requireStatus(v, VersionStatus.APPROVED, "仅已批准版本可发布");
+        Map<String, Object> gate = jdbc.queryForMap("SELECT source_type,content_hash,tested_content_hash,reviewed_content_hash,created_by FROM wf_version WHERE id=?", versionId);
+        if ("PROCESS_JSON".equals(gate.get("source_type"))) {
+            if (!java.util.Objects.equals(gate.get("content_hash"), gate.get("tested_content_hash"))) throw new ClientException("当前内容尚未通过模拟测试");
+            if (!java.util.Objects.equals(gate.get("content_hash"), gate.get("reviewed_content_hash"))) throw new ClientException("当前内容尚未通过独立审核");
+            if (publisher.equals(String.valueOf(gate.get("created_by")))) throw new ClientException("编辑者不得发布自己创建的高风险动态流程");
+        }
         ValidationResult r = bpmnValidator.validateForPublish(v.getBpmnXml());
         if (!r.valid()) throw new ClientException("发布校验失败：" + r.reason());
         jdbc.update("UPDATE wf_version SET status=?,published_time=CURRENT_TIMESTAMP,published_by=?,updated_time=CURRENT_TIMESTAMP WHERE id=?",

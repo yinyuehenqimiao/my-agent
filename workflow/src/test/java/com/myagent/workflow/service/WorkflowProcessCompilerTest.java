@@ -54,6 +54,14 @@ class WorkflowProcessCompilerTest {
         assertThrows(ClientException.class, () -> compiler.compile("leave", unknown));
     }
 
+    @Test
+    void rejectsWritePathThatBypassesConfirmation() {
+        WorkflowProcess process = new WorkflowProcess(
+                List.of(node("s", "start"), node("write", "tool.execute"), node("e", "end")),
+                List.of(edge("1", "s", "write", null), edge("2", "write", "e", null)));
+        assertThrows(ClientException.class, () -> compiler.compile("leave", process));
+    }
+
     private WorkflowProcess basic() { return new WorkflowProcess(List.of(node("s", "start"), node("reply", "reply"), node("e", "end")), List.of(edge("1", "s", "reply", null), edge("2", "reply", "e", null))); }
     private WorkflowProcess.Node node(String id, String type) { return new WorkflowProcess.Node(id, type, 1, Map.of()); }
     private WorkflowProcess.Edge edge(String id, String source, String target, WorkflowProcess.Condition condition) { return new WorkflowProcess.Edge(id, source, target, null, condition); }

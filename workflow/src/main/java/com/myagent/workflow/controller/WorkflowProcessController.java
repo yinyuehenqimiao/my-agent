@@ -7,6 +7,7 @@ import com.myagent.system.auth.service.PolicyDecisionService;
 import com.myagent.workflow.model.WorkflowProcess;
 import com.myagent.workflow.service.WorkflowProcessCompiler;
 import com.myagent.workflow.service.WorkflowProcessVersionService;
+import com.myagent.workflow.service.WorkflowReleaseGateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -17,6 +18,7 @@ public class WorkflowProcessController {
     private final WorkflowProcessVersionService versions;
     private final WorkflowProcessCompiler compiler;
     private final PolicyDecisionService policy;
+    private final WorkflowReleaseGateService releaseGate;
 
     @PostMapping("/process-definitions")
     public Result<WorkflowProcessVersionService.VersionResult> create(@RequestBody CreateRequest request) {
@@ -40,6 +42,12 @@ public class WorkflowProcessController {
     public Result<WorkflowProcessCompiler.CompiledProcess> validate(@RequestBody ValidateRequest request) {
         policy.requirePermission(UserContext.requireIdentity(), "workflow:edit");
         return Results.success(compiler.compile(request.defKey(), request.process()));
+    }
+
+    @PostMapping("/process-versions/{versionId}/simulate")
+    public Result<WorkflowReleaseGateService.Report> simulate(@PathVariable long versionId) {
+        var identity = UserContext.requireIdentity(); policy.requirePermission(identity, "workflow:edit");
+        return Results.success(releaseGate.simulate(versionId, identity.getUserId()));
     }
 
     public record CreateRequest(String defKey, String name, String description, WorkflowProcess process) { }
