@@ -1,0 +1,7 @@
+-- 动态流程不可变发布包与草稿并发控制。
+ALTER TABLE wf_version ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64);
+ALTER TABLE wf_version ADD COLUMN IF NOT EXISTS dependency_snapshot TEXT;
+ALTER TABLE wf_version ADD COLUMN IF NOT EXISTS source_type VARCHAR(32) NOT NULL DEFAULT 'LEGACY_BPMN';
+ALTER TABLE wf_version ADD COLUMN IF NOT EXISTS lock_version BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE wf_version ADD COLUMN IF NOT EXISTS tested_content_hash VARCHAR(64);
+ALTER TABLE wf_version ADD COLUMN IF NOT EXISTS reviewed_content_hash VARCHAR(64);

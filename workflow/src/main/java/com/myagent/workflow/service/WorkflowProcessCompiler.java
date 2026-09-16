@@ -18,8 +18,9 @@ import java.util.stream.Collectors;
 @Service
 public class WorkflowProcessCompiler {
 
-    private static final Set<String> TYPES = Set.of("start", "end", "condition", "reply");
-    private static final Set<String> OPERATORS = Set.of("eq", "ne", "gt", "ge", "lt", "le");
+    private static final Set<String> TYPES = Set.of("start", "collect", "tool.query", "knowledge", "react",
+            "condition", "confirm", "tool.execute", "human.wait", "reply", "end");
+    private static final Set<String> OPERATORS = Set.of("eq", "ne", "gt", "ge", "lt", "le", "in", "exists");
 
     public CompiledProcess compile(String defKey, WorkflowProcess process) {
         validate(process);
@@ -33,7 +34,8 @@ public class WorkflowProcessCompiler {
                 case "start" -> xml.append("<startEvent id=\"").append(id).append("\"/>");
                 case "end" -> xml.append("<endEvent id=\"").append(id).append("\"/>");
                 case "condition" -> xml.append("<exclusiveGateway id=\"").append(id).append("\"/>");
-                case "reply" -> appendServiceTask(xml, id, node.type(), node.version());
+                case "collect", "confirm", "human.wait" -> appendUserTask(xml, id, node.type(), node.version());
+                case "tool.query", "knowledge", "react", "tool.execute", "reply" -> appendServiceTask(xml, id, node.type(), node.version());
                 default -> throw new ClientException("不支持的节点类型：" + node.type());
             }
         }
@@ -58,6 +60,15 @@ public class WorkflowProcessCompiler {
                 .append("<flowable:field name=\"nodeVersion\"><flowable:string>").append(version == null ? 1 : version).append("</flowable:string></flowable:field>")
                 .append("<flowable:field name=\"nodeInstanceId\"><flowable:string>").append(escapeXml(id)).append("</flowable:string></flowable:field>")
                 .append("</extensionElements></serviceTask>");
+    }
+
+    private static void appendUserTask(StringBuilder xml, String id, String type, Integer version) {
+        xml.append("<userTask id=\"").append(id).append("\">")
+                .append("<extensionElements>")
+                .append("<flowable:field name=\"nodeType\"><flowable:string>").append(escapeXml(type)).append("</flowable:string></flowable:field>")
+                .append("<flowable:field name=\"nodeVersion\"><flowable:string>").append(version == null ? 1 : version).append("</flowable:string></flowable:field>")
+                .append("<flowable:field name=\"nodeInstanceId\"><flowable:string>").append(escapeXml(id)).append("</flowable:string></flowable:field>")
+                .append("</extensionElements></userTask>");
     }
 
     public void validate(WorkflowProcess process) {
@@ -106,12 +117,18 @@ public class WorkflowProcessCompiler {
         visited.add(id);
     }
 
-    private static String toExpression(WorkflowProcess.Condition condition) { return "${" + condition.field() + " " + mapOperator(condition.operator()) + " '" + condition.value().replace("'", "") + "'}"; }
+    private static String toExpression(WorkflowProcess.Condition condition) {
+        String field = condition.field();
+        String value = condition.value() == null ? "" : condition.value().replace("'", "");
+        if ("exists".equals(condition.operator())) return "${" + field + " != null}";
+        if ("in".equals(condition.operator())) return java.util.Arrays.stream(value.split(",")).map(String::trim).filter(v -> !v.isEmpty()).map(v -> field + " == '" + v + "'").collect(Collectors.joining(" || ", "${", "}"));
+        return "${" + field + " " + mapOperator(condition.operator()) + " '" + value + "'}";
+    }
     private static String mapOperator(String op) { return Map.of("eq", "==", "ne", "!=", "gt", ">", "ge", ">=", "lt", "<", "le", "<=").get(op); }
     private static boolean blank(String value) { return value == null || value.isBlank(); }
     private static String escapeId(String value) { return value.replaceAll("[^A-Za-z0-9_]", "_"); }
     private static String escapeXml(String value) { return value.replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;").replace(">", "&gt;"); }
-    private static String normalize(WorkflowProcess process) { return process.nodes().stream().map(n -> n.id() + ":" + n.type() + ":" + n.version() + ":" + canonical(n.config())).sorted().collect(Collectors.joining("|")) + "#" + process.edges().stream().map(e -> e.id() + ":" + e.source() + ":" + e.target() + ":" + e.outlet() + ":" + e.condition()).sorted().collect(Collectors.joining("|")); }
+    private static String normalize(WorkflowProcess process) { return "v=" + process.schemaVersion() + "#" + process.nodes().stream().map(n -> n.id() + ":" + n.type() + ":" + n.version() + ":" + canonical(n.config())).sorted().collect(Collectors.joining("|")) + "#" + process.edges().stream().map(e -> e.id() + ":" + e.source() + ":" + e.target() + ":" + e.outlet() + ":" + e.condition()).sorted().collect(Collectors.joining("|")) + "#vars=" + canonical(process.variables()) + "#deps=" + canonical(process.dependencies()); }
     private static String canonical(Object value) {
         if (value == null) return "null";
         if (value instanceof Map<?, ?> map) return map.entrySet().stream().sorted(java.util.Comparator.comparing(entry -> String.valueOf(entry.getKey()))).map(entry -> entry.getKey() + "=" + canonical(entry.getValue())).collect(Collectors.joining(",", "{", "}"));

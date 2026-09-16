@@ -4,9 +4,17 @@ import java.util.List;
 import java.util.Map;
 
 /** 画布保存格式；它是可编辑源，BPMN 只能由服务端编译生成。 */
-public record WorkflowProcess(List<Node> nodes, List<Edge> edges) {
+public record WorkflowProcess(int schemaVersion, List<Node> nodes, List<Edge> edges,
+                              List<Variable> variables, List<Dependency> dependencies) {
 
-    public record Node(String id, String type, Integer version, Map<String, Object> config) {
+    public WorkflowProcess(List<Node> nodes, List<Edge> edges) {
+        this(1, nodes, edges, List.of(), List.of());
+    }
+
+    public record Node(String id, String type, Integer version, Position position, Map<String, Object> config) {
+        public Node(String id, String type, Integer version, Map<String, Object> config) {
+            this(id, type, version, null, config);
+        }
     }
 
     public record Edge(String id, String source, String target, String outlet, Condition condition) {
@@ -15,4 +23,11 @@ public record WorkflowProcess(List<Node> nodes, List<Edge> edges) {
     /** 结构化条件，避免接受脚本、SpEL 或任意 Flowable 表达式。 */
     public record Condition(String field, String operator, String value) {
     }
+
+    public record Position(double x, double y) { }
+
+    public record Variable(String name, String type, String source, String sensitivity) { }
+
+    public record Dependency(String kind, String connectorId, String resourceId,
+                             String contractVersion, String contentHash) { }
 }

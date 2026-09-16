@@ -139,7 +139,8 @@ public class BpmnValidator {
     }
 
     private boolean isAllowedSafeType(String type) {
-        return type != null && Set.of("tool", "validate", "permission", "knowledge", "template", "confirm", "approve").contains(type);
+        return type != null && Set.of("tool", "validate", "permission", "knowledge", "template", "confirm", "approve",
+                "tool.query", "tool.execute", "react", "reply").contains(type);
     }
 
     private ValidationResult checkCondition(Element seqFlow) {
