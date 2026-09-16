@@ -43,19 +43,14 @@ public class WorkflowAdminController {
     private final WorkflowProcessCompiler processCompiler;
 
     public WorkflowAdminController(WorkflowVersionService versionService, PolicyDecisionService policy,
-                                   JdbcTemplate jdbc, AuditQueryService auditQueryService) {
-        this(versionService, policy, jdbc, auditQueryService, new WorkflowNodeCatalog());
-    }
-
-    public WorkflowAdminController(WorkflowVersionService versionService, PolicyDecisionService policy,
                                    JdbcTemplate jdbc, AuditQueryService auditQueryService,
-                                   WorkflowNodeCatalog nodeCatalog) {
+                                   WorkflowNodeCatalog nodeCatalog, WorkflowProcessCompiler processCompiler) {
         this.versionService = versionService;
         this.policy = policy;
         this.jdbc = jdbc;
         this.auditQueryService = auditQueryService;
         this.nodeCatalog = nodeCatalog;
-        this.processCompiler = new WorkflowProcessCompiler();
+        this.processCompiler = processCompiler;
     }
 
     // ===== 定义/版本 =====

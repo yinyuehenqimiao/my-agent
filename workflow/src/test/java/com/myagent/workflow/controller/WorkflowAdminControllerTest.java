@@ -6,6 +6,8 @@ import com.myagent.framework.exception.ClientException;
 import com.myagent.system.auth.service.PolicyDecisionService;
 import com.myagent.workflow.service.WorkflowVersionService;
 import com.myagent.workflow.service.AuditQueryService;
+import com.myagent.workflow.service.WorkflowNodeCatalog;
+import com.myagent.workflow.service.WorkflowProcessCompiler;
 import org.junit.jupiter.api.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -34,7 +36,10 @@ class WorkflowAdminControllerTest {
         policy = mock(PolicyDecisionService.class);
         jdbc = mock(JdbcTemplate.class);
         auditQueryService = mock(AuditQueryService.class);
-        controller = new WorkflowAdminController(versionService, policy, jdbc, auditQueryService);
+        controller = new WorkflowAdminController(
+                versionService, policy, jdbc, auditQueryService,
+                new WorkflowNodeCatalog(), new WorkflowProcessCompiler());
+
         UserContext.set(LoginUser.builder().userId("u1").username("u1").build());
     }
 
