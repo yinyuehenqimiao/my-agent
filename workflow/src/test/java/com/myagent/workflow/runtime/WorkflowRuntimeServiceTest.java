@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 阶段 0 运行时入口测试：未发布版本不得启动。 */
 class WorkflowRuntimeServiceTest {
@@ -24,5 +25,12 @@ class WorkflowRuntimeServiceTest {
 
         assertThrows(ClientException.class,
                 () -> service.startCurrentPublishedInstance("demo", "u1", "b1", "t1", null));
+    }
+
+    @Test
+    void bindsCompiledProcessToImmutableRuntimeVersionKey() {
+        String xml = "<definitions><process id=\"wf_demo\" isExecutable=\"true\"><startEvent id=\"s\"/></process></definitions>";
+        String bound = WorkflowRuntimeService.bindRuntimeProcessKey(xml, "wf-12-v34");
+        assertTrue(bound.contains("process id=\"wf-12-v34\""));
     }
 }

@@ -83,9 +83,22 @@ public class WorkflowRuntimeService {
         Deployment dep = repositoryService.createDeployment()
                 .name("wf-" + defKey + "-v" + versionId)
                 .key("wf-deploy-" + versionId)
-                .addString(procDefKey + ".bpmn20.xml", bpmnXml)
+                .addString(procDefKey + ".bpmn20.xml", bindRuntimeProcessKey(bpmnXml, procDefKey))
                 .deploy();
         log.info("workflow deployed def={} version={} deployment={}", defKey, versionId, dep.getId());
+    }
+
+    /** 发布包内容保持不可变；部署时只把受控编译产物的唯一 process id 绑定到版本运行 key。 */
+    static String bindRuntimeProcessKey(String bpmnXml, String runtimeKey) {
+        if (bpmnXml == null || runtimeKey == null || !runtimeKey.matches("[A-Za-z0-9_-]+")) {
+            throw new ClientException("工作流部署内容或运行键不合法");
+        }
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("(<(?:[A-Za-z0-9_]+:)?process\\s+[^>]*?id=\\\")([^\\\"]+)(\\\")");
+        java.util.regex.Matcher matcher = pattern.matcher(bpmnXml);
+        if (!matcher.find()) throw new ClientException("BPMN 缺少可执行 process id");
+        String replacement = matcher.group(1) + runtimeKey + matcher.group(3);
+        if (matcher.find()) throw new ClientException("动态发布包只允许一个 process");
+        return pattern.matcher(bpmnXml).replaceFirst(java.util.regex.Matcher.quoteReplacement(replacement));
     }
 
     private Long findDefinitionId(String defKey) {
