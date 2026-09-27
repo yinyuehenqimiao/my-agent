@@ -32,3 +32,7 @@ frontend/.env.local
 docs/方向/
 resources/enterprise/*.local.json
 resources/enterprise/*.local.png
+
+### Jev ultrafast local artifacts ###
+jev-ultrafast/artifacts/
+jev-ultrafast/.venv/
